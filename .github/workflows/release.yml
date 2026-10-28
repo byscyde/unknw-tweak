@@ -11,12 +11,13 @@ name: Build & Release UNKNW IPA
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag/name for the release (e.g. v453.0-1)'
-        required: true
+        description: 'Release tag'
+        required: false
+        default: latest
 
 permissions:
   contents: write
@@ -81,8 +82,8 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2.0.8
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          name: UNKNW ${{ github.event.inputs.tag || github.ref_name }}
+          tag_name: ${{ github.event.inputs.tag || 'latest' }}
+          name: UNKNW ${{ github.event.inputs.tag || 'latest' }}
           body: |
             UNKNW injected into Instagram (arm64).
             Import `UNKNW-Instagram.ipa` into Feather (or another sideloader) and install.
