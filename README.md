@@ -88,26 +88,30 @@ make package FINALPACKAGE=1            # .deb lands in ./packages/
 make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 ```
 
-## Installing with Feather (non-jailbroken)
+## Distribution: a pre-injected IPA
 
-[Feather](https://github.com/khcrysalis/Feather) sideloads apps and injects
-tweaks, bundling ElleKit so logos/substrate hooks resolve on a stock device.
+UNKNW is shipped as a single Instagram `.ipa` with the tweak already injected, so
+end users do no manual tweak work. You provide a stock Instagram `.ipa` and run:
 
-1. Build the `.deb` and transfer it to your device.
-2. In Feather, import the stock **Instagram `.ipa`**.
-3. Add UNKNW's `.deb` as a tweak to inject into that IPA.
-4. Sign and install with your certificate / pairing method.
-5. Launch Instagram and two-finger long-press to open the panel.
+```bash
+export THEOS=/home/user/theos
+./package-ipa.sh path/to/Instagram.ipa     # → packages/UNKNW-Instagram.ipa
+```
 
-> On a free developer certificate the signature expires after 7 days and must be
-> re-signed; a paid Apple Developer account lasts a year. Separately, Instagram
-> actively detects and bans accounts running modified clients — that risk falls
-> on whoever runs the app.
+This builds the tweak and uses [Azule](https://github.com/Al4ise/Azule) to inject
+the dylib + ElleKit into the app. Users then just import `UNKNW-Instagram.ipa`
+into [Feather](https://github.com/khcrysalis/Feather) and install; Feather signs
+it with their certificate during install (that step is inherent to non-jailbroken
+sideloading). Full details and caveats are in [`PACKAGING.md`](PACKAGING.md).
+
+> Free Apple ID certs expire after 7 days (re-sign to renew); a paid Apple
+> Developer cert lasts a year. Separately, Instagram actively detects and bans
+> accounts running modified clients — that risk falls on whoever runs the app.
 
 ### Developing from Windows
 
-Build here (Linux/theos) to produce the `.deb`, then do signing + install with
-Feather on the device side. No Mac is needed for the build.
+Build + inject here (Linux/theos) to produce the `.ipa`; users sign + install
+with Feather on the device side. No Mac is needed.
 
 ---
 

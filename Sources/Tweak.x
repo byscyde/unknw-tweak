@@ -13,6 +13,11 @@
 #import "Features.h"
 #import "UNKNWSettingsController.h"
 
+// Declares the %new method below so the compiler sees the selector.
+@interface UIWindow (UNKNW)
+- (void)unknw_installSettingsGesture;
+@end
+
 #pragma mark - Settings gesture (always active)
 
 %hook UIWindow
@@ -55,7 +60,7 @@
 
         NSUInteger loaded = 0;
         for (UNKNWFeature *feature in UNKNWAllFeatures()) {
-            if (feature.initializer && UNKNWPrefBool(feature.key, feature.defaultValue)) {
+            if (feature.initializer && UNKNWPrefBool(feature.key, feature.defaultBool)) {
                 feature.initializer();
                 loaded++;
             }

@@ -85,7 +85,7 @@ NSString *const UNKNWAccountIsVerified = @"isVerified";
     if (!previous) {
         diff.isFirstSnapshot = YES;
         diff.unfollowers = @[];
-        diff.newFollowers = @[];
+        diff.addedFollowers = @[];
         diff.profileChanges = @[];
         [self writeFollowers:followers following:following];
         return diff;
@@ -103,7 +103,7 @@ NSString *const UNKNWAccountIsVerified = @"isVerified";
     for (NSString *pk in curFollowers) {
         if (!prevFollowers[pk]) [newFollowers addObject:curFollowers[pk]];
     }
-    diff.newFollowers = newFollowers;
+    diff.addedFollowers = newFollowers;
 
     // Profile changes among accounts present in both follower snapshots.
     NSArray<NSString *> *trackedFields = @[UNKNWAccountUsername, UNKNWAccountFullName,
@@ -124,7 +124,7 @@ NSString *const UNKNWAccountIsVerified = @"isVerified";
             change.username = after[UNKNWAccountUsername];
             change.field = field;
             change.oldValue = oldValue;
-            change.newValue = newValue;
+            change.updatedValue = newValue;
             [changes addObject:change];
         }
     }

@@ -25,12 +25,12 @@ extern NSString *const UNKNWAccountIsVerified; // NSNumber(BOOL)
 @property (nonatomic, copy) NSString *username;
 @property (nonatomic, copy) NSString *field;     // e.g. "username", "isPrivate"
 @property (nonatomic, copy, nullable) id oldValue;
-@property (nonatomic, copy, nullable) id newValue;
+@property (nonatomic, copy, nullable) id updatedValue;
 @end
 
 @interface UNKNWFollowerDiff : NSObject
 @property (nonatomic, copy) NSArray<NSDictionary *> *unfollowers;       // left since last snapshot
-@property (nonatomic, copy) NSArray<NSDictionary *> *newFollowers;
+@property (nonatomic, copy) NSArray<NSDictionary *> *addedFollowers;   // gained since last snapshot
 @property (nonatomic, copy) NSArray<NSDictionary *> *notFollowingBack;  // you follow, they don't
 @property (nonatomic, copy) NSArray<UNKNWProfileChange *> *profileChanges;
 @property (nonatomic, assign) BOOL isFirstSnapshot;
