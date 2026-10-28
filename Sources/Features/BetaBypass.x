@@ -60,7 +60,16 @@ static void UNKNWKillNag(UIViewController *target) {
     %orig;
 }
 
-// Backstop: if it appeared anyway (added as a child/overlay), remove it.
+// Earliest backstop: hide it before it is drawn, then remove on the next loop.
+- (void)viewWillAppear:(BOOL)animated {
+    %orig;
+    if (!UNKNWIsNag(self)) return;
+    self.view.hidden = YES;
+    __weak UIViewController *vc = self;
+    dispatch_async(dispatch_get_main_queue(), ^{ UNKNWKillNag(vc); });
+}
+
+// Final backstop: if it appeared anyway (added as a child/overlay), remove it.
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
     if (!UNKNWIsNag(self)) return;

@@ -50,10 +50,10 @@ DYLIB="$ROOT/.theos/obj/UNKNW.dylib"
 
 echo "==> Building CydiaSubstrate shim (arm64)"
 clang -target arm64-apple-ios14.0 -isysroot "$SDK" -dynamiclib \
-    -install_name @rpath/CydiaSubstrate.framework/CydiaSubstrate \
+    -install_name @rpath/UNKNWCore.framework/UNKNWCore \
     -framework Foundation -lobjc \
-    -o "$ROOT/substrate/CydiaSubstrate" "$ROOT/substrate/CydiaSubstrate.m"
-ldid -S "$ROOT/substrate/CydiaSubstrate"
+    -o "$ROOT/substrate/UNKNWCore" "$ROOT/substrate/CydiaSubstrate.m"
+ldid -S "$ROOT/substrate/UNKNWCore"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -61,7 +61,7 @@ trap 'rm -rf "$WORK"' EXIT
 echo "==> Rewriting dylib load paths for sideload"
 cp "$DYLIB" "$WORK/UNKNW.dylib"
 install_name_tool -id @rpath/UNKNW.dylib "$WORK/UNKNW.dylib"
-install_name_tool -change "$SUBSTRATE_PATH" @rpath/CydiaSubstrate.framework/CydiaSubstrate "$WORK/UNKNW.dylib"
+install_name_tool -change "$SUBSTRATE_PATH" @rpath/UNKNWCore.framework/UNKNWCore "$WORK/UNKNW.dylib"
 ldid -S "$WORK/UNKNW.dylib"
 
 echo "==> Unpacking base IPA"
@@ -73,21 +73,21 @@ EXEC="$APP/$EXECNAME"
 [[ -f "$EXEC" ]] || die "executable $EXECNAME not found"
 mkdir -p "$APP/Frameworks"
 
-echo "==> Bundling UNKNW.dylib + CydiaSubstrate.framework"
+echo "==> Bundling UNKNW.dylib + UNKNWCore.framework (neutral-named runtime)"
 cp "$WORK/UNKNW.dylib" "$APP/Frameworks/UNKNW.dylib"
-FW="$APP/Frameworks/CydiaSubstrate.framework"
+FW="$APP/Frameworks/UNKNWCore.framework"
 mkdir -p "$FW"
-cp "$ROOT/substrate/CydiaSubstrate" "$FW/CydiaSubstrate"
+cp "$ROOT/substrate/UNKNWCore" "$FW/UNKNWCore"
 cat > "$FW/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
-    <key>CFBundleExecutable</key><string>CydiaSubstrate</string>
-    <key>CFBundleIdentifier</key><string>com.saurik.substrate</string>
+    <key>CFBundleExecutable</key><string>UNKNWCore</string>
+    <key>CFBundleIdentifier</key><string>dev.scyde.unknw.core</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-    <key>CFBundleName</key><string>CydiaSubstrate</string>
+    <key>CFBundleName</key><string>UNKNWCore</string>
     <key>CFBundlePackageType</key><string>FMWK</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundleVersion</key><string>1</string>
@@ -95,7 +95,7 @@ cat > "$FW/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
-ldid -S "$FW/CydiaSubstrate"
+ldid -S "$FW/UNKNWCore"
 
 echo "==> Injecting load command into app binary"
 # Preserve the app's original entitlements (keychain-access-groups, app groups,
