@@ -52,33 +52,56 @@ jobs:
         run: git clone --depth 1 https://github.com/Al4ise/Azule "$AZULE_DIR"
 
       - name: Download base Instagram IPA
+        id: dl
+        continue-on-error: true
         env:
-          # Primary path: pull the base asset straight off this repo's release
-          # with `gh release download` (canonical, handles the signed redirect
-          # itself). Optional override: set the BASE_IPA_URL secret to a CDN URL.
           BASE_IPA_URL: ${{ secrets.BASE_IPA_URL }}
           BASE_IPA_AUTH: ${{ secrets.BASE_IPA_AUTH }}
           BASE_RELEASE_TAG: ig-v453
           BASE_ASSET_NAME: com.burbn.instagram_453.0.ipa.ipa
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -x
           mkdir -p ipa
-          if [ -n "$BASE_IPA_URL" ]; then
-            echo "Fetching base IPA from CDN: $BASE_IPA_URL"
-            AUTH=(); [ -n "$BASE_IPA_AUTH" ] && AUTH=(-H "$BASE_IPA_AUTH")
-            curl -fL --retry 4 --retry-delay 5 --retry-all-errors "${AUTH[@]}" -o ipa/instagram.ipa "$BASE_IPA_URL"
-          else
-            echo "Downloading '$BASE_ASSET_NAME' from release '$BASE_RELEASE_TAG'"
-            gh release download "$BASE_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-              --pattern "$BASE_ASSET_NAME" --dir ipa --clobber
-            mv "ipa/$BASE_ASSET_NAME" ipa/instagram.ipa
-          fi
-          ls -la ipa
-          SIG=$(head -c4 ipa/instagram.ipa | od -An -tx1 | tr -d ' ')
-          echo "magic=$SIG (expect 504b0304 for a PK zip)"
-          case "$SIG" in 504b*) echo "base IPA looks like a zip" ;;
-            *) echo "::error::base IPA is not a zip (magic=$SIG)"; exit 1 ;; esac
+          LOG=ipa/_dl.log
+          {
+            echo "==== diagnostics $(date -u) ===="
+            echo "gh: $(gh --version 2>&1 | head -1)"; echo "curl: $(curl --version 2>&1 | head -1)"
+            echo "disk:"; df -h . ; echo "proxy env:"; env | grep -iE 'proxy|CA_BUNDLE|CURL_CA' || echo none
+            echo "resolve asset id:"
+            AID=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$BASE_RELEASE_TAG" --jq ".assets[] | select(.name==\"$BASE_ASSET_NAME\") | .id" 2>&1)
+            echo "  asset id=[$AID]"
+            echo "==== attempt A: gh release download ===="
+            gh release download "$BASE_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$BASE_ASSET_NAME" --dir ipa --clobber 2>&1 \
+              && mv "ipa/$BASE_ASSET_NAME" ipa/instagram.ipa && echo "  A ok" || echo "  A failed rc=$?"
+            if [ ! -s ipa/instagram.ipa ]; then
+              echo "==== attempt B: curl api asset octet-stream (verbose headers) ===="
+              curl -sS -L -D - -o ipa/instagram.ipa -w "\n  http=%{http_code} size=%{size_download} url=%{url_effective}\n" \
+                -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
+                "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$AID" 2>&1 | sed 's/Bearer .*/Bearer ***/' | head -40
+            fi
+            if [ ! -s ipa/instagram.ipa ]; then
+              echo "==== attempt C: curl browser_download_url ===="
+              BURL=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$BASE_RELEASE_TAG" --jq ".assets[] | select(.name==\"$BASE_ASSET_NAME\") | .browser_download_url" 2>&1)
+              echo "  burl=$BURL"
+              curl -sS -L -D - -o ipa/instagram.ipa -w "\n  http=%{http_code} size=%{size_download}\n" "$BURL" 2>&1 | head -40
+            fi
+            echo "==== result ===="; ls -la ipa; echo "head:"; head -c4 ipa/instagram.ipa 2>/dev/null | od -An -tx1
+          } > "$LOG" 2>&1 || true
+          cat "$LOG"
+          SIG=$(head -c4 ipa/instagram.ipa 2>/dev/null | od -An -tx1 | tr -d ' ')
+          case "$SIG" in 504b*) echo "ok=true" >> "$GITHUB_OUTPUT" ;; *) echo "ok=false" >> "$GITHUB_OUTPUT" ;; esac
+
+      - name: Publish download diagnostics (always, so it is readable)
+        if: always() && steps.dl.outputs.ok != 'true'
+        uses: softprops/action-gh-release@v2.0.8
+        with:
+          tag_name: ci-debug
+          name: CI debug
+          files: ipa/_dl.log
+
+      - name: Fail if base IPA missing
+        if: steps.dl.outputs.ok != 'true'
+        run: echo "::error::base IPA download failed; see ci-debug release _dl.log" && exit 1
 
       - name: Clean base (neutralize pre-injected tweak, keep binary intact)
         run: |
