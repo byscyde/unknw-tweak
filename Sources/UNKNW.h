@@ -24,6 +24,7 @@
 // App Fixes (enablers for sideloaded installs)
 #define kUNKNWKeychainFixKey        @"UNKNW.keychainFix"
 #define kUNKNWBetaBypassKey         @"UNKNW.betaBypass"
+#define kUNKNWFixesLoadingKey       @"UNKNW._fixesLoading" // crash-loop guard flag
 
 // Feed
 #define kUNKNWHideAdsKey            @"UNKNW.hideAds"

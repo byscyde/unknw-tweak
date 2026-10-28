@@ -81,6 +81,19 @@
             return;
         }
 
+        // Crash-loop guard: if the previous launch crashed while the App Fixes
+        // were loading, disable them this launch so the app stays usable instead
+        // of crash-looping (the user can re-enable once the fix is sorted).
+        if (UNKNWPrefBool(kUNKNWFixesLoadingKey, NO)) {
+            UNKNWLog(@"recovering — App Fixes crashed last launch; disabling them");
+            UNKNWPrefSetBool(kUNKNWKeychainFixKey, NO);
+            UNKNWPrefSetBool(kUNKNWBetaBypassKey, NO);
+            UNKNWPrefSetBool(kUNKNWFixesLoadingKey, NO);
+        }
+
+        BOOL loadingFixes = UNKNWPrefBool(kUNKNWKeychainFixKey, NO) || UNKNWPrefBool(kUNKNWBetaBypassKey, NO);
+        if (loadingFixes) UNKNWPrefSetBool(kUNKNWFixesLoadingKey, YES);
+
         // "App Fixes" are enablers that just make the sideloaded app usable
         // (keychain/login, beta gate) — they load regardless of activation.
         // Every other (premium) feature stays locked until a license is active.
@@ -94,6 +107,12 @@
                 feature.initializer();
                 loaded++;
             }
+        }
+
+        // Survived startup with the fixes loaded — clear the guard flag.
+        if (loadingFixes) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ UNKNWPrefSetBool(kUNKNWFixesLoadingKey, NO); });
         }
 
         UNKNWLog(@"loaded into %@ — %lu/%lu feature(s) active",

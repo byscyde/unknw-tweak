@@ -55,11 +55,11 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
             [UNKNWFeature toggle:kUNKNWKeychainFixKey category:cFixes section:@""
                            title:@"Fix login persistence"
                           detail:@"Keep your session across relaunches on a re-signed install"
-                       defaultOn:YES init:UNKNWInstallKeychainFix],
+                       defaultOn:NO init:UNKNWInstallKeychainFix],
             [UNKNWFeature toggle:kUNKNWBetaBypassKey category:cFixes section:@""
                            title:@"Bypass beta update gate"
-                          detail:@"Skip the \"update Instagram Beta\" screen (needs the gate hook)"
-                       defaultOn:YES init:UNKNWInitBetaBypass],
+                          detail:@"Skip the \"update Instagram Beta\" screen"
+                       defaultOn:NO init:UNKNWInitBetaBypass],
 
             // ===== Feed =====
             [UNKNWFeature toggle:kUNKNWHideAdsKey category:cFeed section:@"Posts"
