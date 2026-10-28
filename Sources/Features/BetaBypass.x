@@ -1,41 +1,44 @@
 // Bypass the "It's time to update Instagram Beta" gate.
 //
-// On this build the gate is presented by the Swift class
-// IGCoreRootTestFlightNagPlugin.TestFlightUpdateNudgeViewController. Because the
-// name contains a dot (a Swift class), we resolve it at runtime and swizzle its
-// viewDidAppear: with MSHookMessageEx rather than a compile-time %hook, then
-// dismiss/pop it the moment it appears so it never blocks the app.
+// The gate is the Swift class
+// IGCoreRootTestFlightNagPlugin.TestFlightUpdateNudgeViewController. That class
+// is registered lazily, so resolving it at %ctor can miss it. Instead we hook
+// the base UIViewController's viewDidAppear: (always available) and, whenever
+// the controller that appeared is the nag, dismiss/pop/remove it immediately so
+// it never blocks the app. A plain string compare per appearance is cheap.
 //
-// If a future Instagram version renames the class, update the string below
-// (discover it again with Developer Logging / Diagnostics).
+// If a future Instagram version renames the class, update the string (rediscover
+// with Developer Logging / the Diagnostics screen).
 
 #import "../UNKNW.h"
 
 #define kUNKNWNagClassName @"IGCoreRootTestFlightNagPlugin.TestFlightUpdateNudgeViewController"
 
-// Provided by the bundled CydiaSubstrate shim.
-extern void MSHookMessageEx(Class cls, SEL sel, IMP imp, IMP *result);
+%group UNKNWBetaBypass
 
-static void (*orig_nag_viewDidAppear)(UIViewController *, SEL, BOOL);
+%hook UIViewController
 
-static void unknw_nag_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
-    if (orig_nag_viewDidAppear) orig_nag_viewDidAppear(self, _cmd, animated);
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    if (![NSStringFromClass([self class]) isEqualToString:kUNKNWNagClassName]) return;
+
     UNKNWLog(@"beta bypass: dismissing update nag");
-    UINavigationController *nav = self.navigationController;
-    if (nav && nav.viewControllers.count > 1) {
-        [nav popViewControllerAnimated:NO];
+    UIViewController *vc = self;
+    if (vc.presentingViewController) {
+        [vc.presentingViewController dismissViewControllerAnimated:NO completion:nil];
+    } else if (vc.navigationController.viewControllers.count > 1) {
+        [vc.navigationController popViewControllerAnimated:NO];
     } else {
-        [self dismissViewControllerAnimated:NO completion:nil];
+        [vc.view removeFromSuperview];
+        [vc willMoveToParentViewController:nil];
+        [vc removeFromParentViewController];
     }
 }
 
+%end
+
+%end
+
 void UNKNWInitBetaBypass(void) {
-    Class cls = NSClassFromString(kUNKNWNagClassName);
-    if (!cls) {
-        UNKNWLog(@"beta bypass: nag class not found (name may have changed)");
-        return;
-    }
-    MSHookMessageEx(cls, @selector(viewDidAppear:),
-                    (IMP)unknw_nag_viewDidAppear, (IMP *)&orig_nag_viewDidAppear);
-    UNKNWLog(@"beta bypass installed");
+    %init(UNKNWBetaBypass);
 }
