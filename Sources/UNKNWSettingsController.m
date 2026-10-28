@@ -206,10 +206,10 @@ static const void *kFeatureKey = &kFeatureKey;
         field.autocapitalizationType = UITextAutocapitalizationTypeNone;
     }];
     __weak typeof(self) weakSelf = self;
-    [alert addAction:[UIAlertAction actionWithTitle:@"Save & Validate" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+    [alert addAction:[UIAlertAction actionWithTitle:@"Save & Activate" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         NSString *key = alert.textFields.firstObject.text;
-        [UNKNWLicense.shared validateKey:key completion:^(BOOL valid, NSString *message) {
-            [weakSelf toast:valid ? @"License valid" : (message ?: @"Invalid license")];
+        [UNKNWLicense.shared activateKey:key completion:^(BOOL activated, NSString *message) {
+            [weakSelf toast:activated ? @"License activated" : (message ?: @"Activation failed")];
             [weakSelf.tableView reloadData];
         }];
     }]];

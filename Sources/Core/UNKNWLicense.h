@@ -23,9 +23,19 @@ NS_ASSUME_NONNULL_BEGIN
 /// The stored license key (persisted in prefs), or nil.
 @property (nonatomic, copy, nullable) NSString *key;
 
-/// POST the key to /v1/validate. Completion runs on the main queue.
-- (void)validateKey:(NSString *)key
-         completion:(void (^)(BOOL valid, NSString *_Nullable message))completion;
+/// A stable per-install identifier (generated once, persisted in prefs).
+@property (nonatomic, readonly) NSString *deviceId;
+
+/// POST the key + this device to /v1/activate (binds the device, enforcing the
+/// license's device limit). On success the key is stored. Main-queue completion.
+- (void)activateKey:(NSString *)key
+         completion:(void (^)(BOOL activated, NSString *_Nullable message))completion;
+
+/// GET /v1/status for the stored key + device (valid + activated state).
+- (void)refreshStatus:(void (^)(BOOL valid, BOOL activated, NSString *_Nullable message))completion;
+
+/// Release this device from the stored key.
+- (void)deactivate:(nullable void (^)(BOOL ok, NSString *_Nullable message))completion;
 
 /// PUT the current UNKNW.* settings to /v1/settings for the stored key.
 - (void)backupSettings:(nullable void (^)(BOOL success, NSString *_Nullable message))completion;

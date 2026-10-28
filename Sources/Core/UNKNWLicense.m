@@ -1,5 +1,6 @@
 #import "UNKNWLicense.h"
 #import "../UNKNW.h"
+#import <UIKit/UIKit.h>
 
 // Change this to your server, or set the UNKNW_SERVER_URL env var.
 static NSString *const kDefaultBaseURL = @"https://api.scyde.dev";
@@ -17,30 +18,36 @@ static NSString *const kDefaultBaseURL = @"https://api.scyde.dev";
 
 - (instancetype)init {
     if ((self = [super init])) {
-        _session = [NSURLSession sessionWithConfiguration:
-                    [NSURLSessionConfiguration defaultSessionConfiguration]];
+        _session = [NSURLSession sessionWithConfiguration:[NSURLSessionConfiguration defaultSessionConfiguration]];
         NSString *env = NSProcessInfo.processInfo.environment[@"UNKNW_SERVER_URL"];
         _baseURLString = env.length ? env : kDefaultBaseURL;
     }
     return self;
 }
 
-- (NSString *)key {
-    return UNKNWPrefString(kUNKNWLicenseKeyKey, nil);
+- (NSString *)key { return UNKNWPrefString(kUNKNWLicenseKeyKey, nil); }
+- (void)setKey:(NSString *)key { UNKNWPrefSetString(kUNKNWLicenseKeyKey, key); }
+
+// Stable per-install id: generated once and persisted. Survives reinstalls only
+// via the settings backup; a fresh install gets a new id (and a new activation).
+- (NSString *)deviceId {
+    NSString *stored = UNKNWPrefString(kUNKNWDeviceIdKey, nil);
+    if (stored.length) return stored;
+    NSString *generated = [NSUUID UUID].UUIDString;
+    UNKNWPrefSetString(kUNKNWDeviceIdKey, generated);
+    return generated;
 }
 
-- (void)setKey:(NSString *)key {
-    UNKNWPrefSetString(kUNKNWLicenseKeyKey, key);
-}
+- (NSString *)deviceName { return UIDevice.currentDevice.name ?: @"iPhone"; }
 
 #pragma mark - Settings payload
 
-// Collect every UNKNW.* preference into a JSON-safe dictionary.
 - (NSDictionary *)collectSettings {
     NSDictionary *all = [NSUserDefaults.standardUserDefaults dictionaryRepresentation];
     NSMutableDictionary *settings = [NSMutableDictionary dictionary];
     for (NSString *k in all) {
-        if ([k hasPrefix:@"UNKNW."] && ![k isEqualToString:kUNKNWLicenseKeyKey]) {
+        if ([k hasPrefix:@"UNKNW."] &&
+            ![k isEqualToString:kUNKNWLicenseKeyKey] && ![k isEqualToString:kUNKNWDeviceIdKey]) {
             settings[k] = all[k];
         }
     }
@@ -50,7 +57,8 @@ static NSString *const kDefaultBaseURL = @"https://api.scyde.dev";
 - (void)applySettings:(NSDictionary *)settings {
     if (![settings isKindOfClass:[NSDictionary class]]) return;
     for (NSString *k in settings) {
-        if ([k hasPrefix:@"UNKNW."] && ![k isEqualToString:kUNKNWLicenseKeyKey]) {
+        if ([k hasPrefix:@"UNKNW."] &&
+            ![k isEqualToString:kUNKNWLicenseKeyKey] && ![k isEqualToString:kUNKNWDeviceIdKey]) {
             [NSUserDefaults.standardUserDefaults setObject:settings[k] forKey:k];
         }
     }
@@ -67,27 +75,47 @@ static NSString *const kDefaultBaseURL = @"https://api.scyde.dev";
     return request;
 }
 
-- (void)send:(NSURLRequest *)request completion:(void (^)(BOOL, NSDictionary *, NSString *))completion {
+- (void)send:(NSURLRequest *)request completion:(void (^)(BOOL ok, NSDictionary *json, NSString *message))completion {
     NSURLSessionDataTask *task = [_session dataTaskWithRequest:request
                                              completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
         NSDictionary *json = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        if (![json isKindOfClass:[NSDictionary class]]) json = nil;
         BOOL ok = !error && http.statusCode >= 200 && http.statusCode < 300;
         NSString *message = error.localizedDescription ?: json[@"message"];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (completion) completion(ok, json, message);
-        });
+        dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(ok, json, message); });
     }];
     [task resume];
 }
 
-- (void)validateKey:(NSString *)key completion:(void (^)(BOOL, NSString *))completion {
-    NSMutableURLRequest *request = [self requestForPath:@"/v1/validate" method:@"POST"];
-    request.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{@"key": key ?: @""} options:0 error:nil];
+- (void)activateKey:(NSString *)key completion:(void (^)(BOOL, NSString *))completion {
+    NSMutableURLRequest *request = [self requestForPath:@"/v1/activate" method:@"POST"];
+    request.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{
+        @"key": key ?: @"", @"deviceId": self.deviceId, @"deviceName": [self deviceName],
+    } options:0 error:nil];
     [self send:request completion:^(BOOL ok, NSDictionary *json, NSString *message) {
-        BOOL valid = ok && [json[@"valid"] boolValue];
-        if (valid) self.key = key;
-        if (completion) completion(valid, message);
+        BOOL activated = ok && [json[@"activated"] boolValue];
+        if (activated) self.key = key;
+        if (completion) completion(activated, message);
+    }];
+}
+
+- (void)refreshStatus:(void (^)(BOOL, BOOL, NSString *))completion {
+    if (!self.key.length) { if (completion) completion(NO, NO, @"No license key"); return; }
+    NSMutableURLRequest *request = [self requestForPath:@"/v1/status" method:@"GET"];
+    [request setValue:self.key forHTTPHeaderField:@"X-License-Key"];
+    [request setValue:self.deviceId forHTTPHeaderField:@"X-Device-Id"];
+    [self send:request completion:^(BOOL ok, NSDictionary *json, NSString *message) {
+        if (completion) completion([json[@"valid"] boolValue], [json[@"activated"] boolValue], message);
+    }];
+}
+
+- (void)deactivate:(void (^)(BOOL, NSString *))completion {
+    if (!self.key.length) { if (completion) completion(NO, @"No license key"); return; }
+    NSMutableURLRequest *request = [self requestForPath:@"/v1/deactivate" method:@"POST"];
+    request.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{@"key": self.key, @"deviceId": self.deviceId} options:0 error:nil];
+    [self send:request completion:^(BOOL ok, NSDictionary *json, NSString *message) {
+        if (completion) completion(ok && [json[@"ok"] boolValue], message);
     }];
 }
 
@@ -95,8 +123,8 @@ static NSString *const kDefaultBaseURL = @"https://api.scyde.dev";
     if (!self.key.length) { if (completion) completion(NO, @"No license key"); return; }
     NSMutableURLRequest *request = [self requestForPath:@"/v1/settings" method:@"PUT"];
     [request setValue:self.key forHTTPHeaderField:@"X-License-Key"];
-    request.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{@"settings": [self collectSettings]}
-                                                      options:0 error:nil];
+    [request setValue:self.deviceId forHTTPHeaderField:@"X-Device-Id"];
+    request.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{@"settings": [self collectSettings]} options:0 error:nil];
     [self send:request completion:^(BOOL ok, NSDictionary *json, NSString *message) {
         if (completion) completion(ok, message ?: (ok ? @"Backed up" : @"Backup failed"));
     }];
@@ -106,6 +134,7 @@ static NSString *const kDefaultBaseURL = @"https://api.scyde.dev";
     if (!self.key.length) { if (completion) completion(NO, @"No license key"); return; }
     NSMutableURLRequest *request = [self requestForPath:@"/v1/settings" method:@"GET"];
     [request setValue:self.key forHTTPHeaderField:@"X-License-Key"];
+    [request setValue:self.deviceId forHTTPHeaderField:@"X-Device-Id"];
     [self send:request completion:^(BOOL ok, NSDictionary *json, NSString *message) {
         if (ok) [self applySettings:json[@"settings"]];
         if (completion) completion(ok, message ?: (ok ? @"Restored" : @"Restore failed"));

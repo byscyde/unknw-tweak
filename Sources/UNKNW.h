@@ -18,6 +18,7 @@
 // General
 #define kUNKNWEnabledKey            @"UNKNW.enabled"        // master switch
 #define kUNKNWLicenseKeyKey         @"UNKNW.licenseKey"     // stored license key
+#define kUNKNWDeviceIdKey           @"UNKNW.deviceId"       // persistent per-install device id
 
 // Feed
 #define kUNKNWHideAdsKey            @"UNKNW.hideAds"
