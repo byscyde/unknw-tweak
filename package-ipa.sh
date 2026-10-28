@@ -48,20 +48,32 @@ echo "==> Building UNKNW (optimized, unstripped)"
 DYLIB="$ROOT/.theos/obj/UNKNW.dylib"
 [[ -f "$DYLIB" ]] || die "dylib not found at $DYLIB"
 
-echo "==> Building CydiaSubstrate shim (arm64)"
-clang -target arm64-apple-ios14.0 -isysroot "$SDK" -dynamiclib \
-    -install_name @rpath/UNKNWCore.framework/UNKNWCore \
-    -framework Foundation -lobjc \
-    -o "$ROOT/substrate/UNKNWCore" "$ROOT/substrate/CydiaSubstrate.m"
-ldid -S "$ROOT/substrate/UNKNWCore"
-
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 echo "==> Rewriting dylib load paths for sideload"
 cp "$DYLIB" "$WORK/UNKNW.dylib"
 install_name_tool -id @rpath/UNKNW.dylib "$WORK/UNKNW.dylib"
-install_name_tool -change "$SUBSTRATE_PATH" @rpath/UNKNWCore.framework/UNKNWCore "$WORK/UNKNW.dylib"
+
+# With the logos "internal" generator the dylib has no external substrate
+# dependency and is fully self-contained. Only if an older/substrate build
+# still references CydiaSubstrate do we build and bundle a neutral-named runtime.
+NEED_RUNTIME=0
+if otool -L "$WORK/UNKNW.dylib" | grep -qiE 'CydiaSubstrate|UNKNWCore\.framework|/CydiaSubstrate$'; then
+    NEED_RUNTIME=1
+fi
+
+if [ "$NEED_RUNTIME" = "1" ]; then
+    echo "==> dylib needs a runtime; building neutral-named UNKNWCore shim"
+    clang -target arm64-apple-ios14.0 -isysroot "$SDK" -dynamiclib \
+        -install_name @rpath/UNKNWCore.framework/UNKNWCore \
+        -framework Foundation -lobjc \
+        -o "$ROOT/substrate/UNKNWCore" "$ROOT/substrate/CydiaSubstrate.m"
+    ldid -S "$ROOT/substrate/UNKNWCore"
+    install_name_tool -change "$SUBSTRATE_PATH" @rpath/UNKNWCore.framework/UNKNWCore "$WORK/UNKNW.dylib"
+else
+    echo "==> dylib is self-contained (no substrate dependency)"
+fi
 ldid -S "$WORK/UNKNW.dylib"
 
 echo "==> Unpacking base IPA"
@@ -73,12 +85,14 @@ EXEC="$APP/$EXECNAME"
 [[ -f "$EXEC" ]] || die "executable $EXECNAME not found"
 mkdir -p "$APP/Frameworks"
 
-echo "==> Bundling UNKNW.dylib + UNKNWCore.framework (neutral-named runtime)"
+echo "==> Bundling UNKNW.dylib"
 cp "$WORK/UNKNW.dylib" "$APP/Frameworks/UNKNW.dylib"
-FW="$APP/Frameworks/UNKNWCore.framework"
-mkdir -p "$FW"
-cp "$ROOT/substrate/UNKNWCore" "$FW/UNKNWCore"
-cat > "$FW/Info.plist" <<'PLIST'
+if [ "$NEED_RUNTIME" = "1" ]; then
+    echo "    + UNKNWCore.framework (neutral-named runtime)"
+    FW="$APP/Frameworks/UNKNWCore.framework"
+    mkdir -p "$FW"
+    cp "$ROOT/substrate/UNKNWCore" "$FW/UNKNWCore"
+    cat > "$FW/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -95,7 +109,8 @@ cat > "$FW/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
-ldid -S "$FW/UNKNWCore"
+    ldid -S "$FW/UNKNWCore"
+fi
 
 echo "==> Injecting load command into app binary"
 # Preserve the app's original entitlements (keychain-access-groups, app groups,
