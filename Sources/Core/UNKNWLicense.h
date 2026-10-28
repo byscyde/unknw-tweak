@@ -26,6 +26,14 @@ NS_ASSUME_NONNULL_BEGIN
 /// A stable per-install identifier (generated once, persisted in prefs).
 @property (nonatomic, readonly) NSString *deviceId;
 
+/// Cached activation state (persisted). The loader gates all features on this;
+/// it is set by activation / status and cleared on failure or deactivation.
+@property (nonatomic, readonly) BOOL isActivated;
+
+/// Fire-and-forget status refresh for app launch (updates isActivated for the
+/// next launch so revocation/expiry propagate).
+- (void)refreshOnLaunch;
+
 /// POST the key + this device to /v1/activate (binds the device, enforcing the
 /// license's device limit). On success the key is stored. Main-queue completion.
 - (void)activateKey:(NSString *)key

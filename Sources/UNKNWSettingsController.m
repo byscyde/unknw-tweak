@@ -146,6 +146,8 @@ static const void *kFeatureKey = &kFeatureKey;
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == 0) return @"Toggling a feature takes effect the next time Instagram is relaunched.";
+    if (section == 1 && !UNKNWLicense.shared.isActivated)
+        return @"\U0001F512 Locked — activate a license under Account & License to unlock features.";
     return nil;
 }
 
@@ -172,9 +174,11 @@ static const void *kFeatureKey = &kFeatureKey;
     }
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     NSString *stored = UNKNWLicense.shared.key;
+    BOOL activated = UNKNWLicense.shared.isActivated;
     cell.textLabel.text = @"Account & License";
-    cell.detailTextLabel.text = stored.length ? @"Key saved · tap to manage" : @"Tap to enter your license key";
-    cell.imageView.image = [UIImage systemImageNamed:@"person.crop.circle"];
+    cell.detailTextLabel.text = activated ? @"Activated · tap to manage"
+        : (stored.length ? @"Not activated · tap to retry" : @"Tap to enter your license key");
+    cell.imageView.image = [UIImage systemImageNamed:(activated ? @"checkmark.seal" : @"lock")];
     cell.imageView.tintColor = [UIColor labelColor];
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     return cell;

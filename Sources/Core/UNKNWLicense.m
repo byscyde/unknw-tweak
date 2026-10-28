@@ -28,6 +28,10 @@ static NSString *const kDefaultBaseURL = @"https://api.scyde.dev";
 - (NSString *)key { return UNKNWPrefString(kUNKNWLicenseKeyKey, nil); }
 - (void)setKey:(NSString *)key { UNKNWPrefSetString(kUNKNWLicenseKeyKey, key); }
 
+- (BOOL)isActivated { return UNKNWPrefBool(kUNKNWActivatedKey, NO); }
+- (void)setActivatedFlag:(BOOL)value { UNKNWPrefSetBool(kUNKNWActivatedKey, value); }
+- (void)refreshOnLaunch { [self refreshStatus:^(BOOL valid, BOOL activated, NSString *message) {}]; }
+
 // Stable per-install id: generated once and persisted. Survives reinstalls only
 // via the settings backup; a fresh install gets a new id (and a new activation).
 - (NSString *)deviceId {
@@ -96,6 +100,7 @@ static NSString *const kDefaultBaseURL = @"https://api.scyde.dev";
     [self send:request completion:^(BOOL ok, NSDictionary *json, NSString *message) {
         BOOL activated = ok && [json[@"activated"] boolValue];
         if (activated) self.key = key;
+        [self setActivatedFlag:activated];
         if (completion) completion(activated, message);
     }];
 }
@@ -106,7 +111,12 @@ static NSString *const kDefaultBaseURL = @"https://api.scyde.dev";
     [request setValue:self.key forHTTPHeaderField:@"X-License-Key"];
     [request setValue:self.deviceId forHTTPHeaderField:@"X-Device-Id"];
     [self send:request completion:^(BOOL ok, NSDictionary *json, NSString *message) {
-        if (completion) completion([json[@"valid"] boolValue], [json[@"activated"] boolValue], message);
+        BOOL valid = [json[@"valid"] boolValue];
+        BOOL activated = [json[@"activated"] boolValue];
+        // Only downgrade the cached flag on a definitive server answer, not on a
+        // network error, so offline launches don't lock a paid user out.
+        if (ok) [self setActivatedFlag:(valid && activated)];
+        if (completion) completion(valid, activated, message);
     }];
 }
 
@@ -115,7 +125,9 @@ static NSString *const kDefaultBaseURL = @"https://api.scyde.dev";
     NSMutableURLRequest *request = [self requestForPath:@"/v1/deactivate" method:@"POST"];
     request.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{@"key": self.key, @"deviceId": self.deviceId} options:0 error:nil];
     [self send:request completion:^(BOOL ok, NSDictionary *json, NSString *message) {
-        if (completion) completion(ok && [json[@"ok"] boolValue], message);
+        BOOL done = ok && [json[@"ok"] boolValue];
+        if (done) [self setActivatedFlag:NO];
+        if (completion) completion(done, message);
     }];
 }
 

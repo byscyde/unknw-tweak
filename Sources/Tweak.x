@@ -12,6 +12,7 @@
 #import "UNKNW.h"
 #import "Features.h"
 #import "UNKNWSettingsController.h"
+#import "Core/UNKNWLicense.h"
 
 // Declares the %new method below so the compiler sees the selector.
 @interface UIWindow (UNKNW)
@@ -67,8 +68,19 @@
         // panel is always reachable.
         %init;
 
+        // Refresh license status in the background for the next launch so
+        // revocation/expiry propagate (never blocks startup).
+        [[UNKNWLicense shared] refreshOnLaunch];
+
         if (!UNKNWPrefBool(kUNKNWEnabledKey, YES)) {
             UNKNWLog(@"master switch off — settings reachable, no features loaded");
+            return;
+        }
+
+        // Gate: everything stays locked until a license key is activated. The
+        // settings panel is still reachable so the user can enter their key.
+        if (!UNKNWLicense.shared.isActivated) {
+            UNKNWLog(@"locked — activate a license to unlock features");
             return;
         }
 
