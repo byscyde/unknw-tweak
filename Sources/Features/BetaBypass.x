@@ -40,8 +40,9 @@ static void UNKNWKillNag(UIViewController *target) {
         [target.view removeFromSuperview];
         [target willMoveToParentViewController:nil];
         [target removeFromParentViewController];
-        // If it lives on its own overlay window, drop that window too.
-        if (w && w != w.windowScene.keyWindow) { w.hidden = YES; }
+        // If it sits on its own overlay window (it is that window's root), hide
+        // the window so it cannot keep covering the app.
+        if (w && w.rootViewController == target) { w.hidden = YES; }
     }
 }
 

@@ -109,9 +109,26 @@ jobs:
           scripts/de-regram.sh ipa/instagram.ipa ipa/clean.ipa
 
       - name: Build + inject
+        id: build
+        continue-on-error: true
         run: |
           chmod +x package-ipa.sh
-          ./package-ipa.sh ipa/clean.ipa packages/UNKNW-Gram.ipa
+          mkdir -p packages
+          set -o pipefail
+          ./package-ipa.sh ipa/clean.ipa packages/UNKNW-Gram.ipa 2>&1 | tee packages/_build.log
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publish build log on failure (readable)
+        if: always() && steps.build.outputs.ok != 'true'
+        uses: softprops/action-gh-release@v2.0.8
+        with:
+          tag_name: ci-debug
+          name: CI debug
+          files: packages/_build.log
+
+      - name: Fail if build did not produce the IPA
+        if: steps.build.outputs.ok != 'true'
+        run: echo "::error::build failed; see ci-debug release _build.log" && exit 1
 
       - name: Publish release
         uses: softprops/action-gh-release@v2.0.8
