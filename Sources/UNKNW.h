@@ -21,6 +21,8 @@
 
 // Feed
 #define kUNKNWHideAdsKey            @"UNKNW.hideAds"
+#define kUNKNWFeedDisableAutoplayKey @"UNKNW.feedDisableAutoplay"
+#define kUNKNWHideCommentsPreviewKey @"UNKNW.hideCommentsPreview"
 
 // Profile Analyzer
 #define kUNKNWProfileAnalyzerKey    @"UNKNW.profileAnalyzer"
@@ -88,6 +90,8 @@ void     UNKNWPrefSetString(NSString *key, NSString *value);
 // %init(group). Registered in Features.m. NULL in the registry = config-only
 // value with no hooks.
 extern void UNKNWInitHideAds(void);
+extern void UNKNWInitFeedDisableAutoplay(void);
+extern void UNKNWInitHideCommentsPreview(void);
 extern void UNKNWInitProfileAnalyzer(void);
 extern void UNKNWInitStoriesArchive(void);
 extern void UNKNWInitMediaDownloader(void);

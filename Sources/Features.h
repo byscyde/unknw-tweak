@@ -1,8 +1,8 @@
 // The feature registry: the single source of truth for which controls exist.
 //
-// The loader (Tweak.x) and the in-app settings panel both read this list, so a
-// feature appears in the UI and gets wired into the hook loader from one
-// declaration. Features are grouped by category and can be one of three kinds.
+// Features are grouped into categories (the top-level menu) and, within a
+// category, into named sections (the grouped blocks on a category's sub-screen).
+// The loader (Tweak.x) and the in-app panel both read this list.
 
 #import <Foundation/Foundation.h>
 
@@ -16,7 +16,8 @@ typedef NS_ENUM(NSInteger, UNKNWFeatureKind) {
 
 @interface UNKNWFeature : NSObject
 @property (nonatomic, copy)   NSString *key;           // NSUserDefaults key
-@property (nonatomic, copy)   NSString *category;      // section header
+@property (nonatomic, copy)   NSString *category;      // top-level menu entry
+@property (nonatomic, copy)   NSString *section;       // block within the category ("" = unnamed)
 @property (nonatomic, copy)   NSString *title;
 @property (nonatomic, copy)   NSString *detail;        // subtitle
 @property (nonatomic, assign) UNKNWFeatureKind kind;
@@ -36,19 +37,28 @@ typedef NS_ENUM(NSInteger, UNKNWFeatureKind) {
 @end
 
 @interface UNKNWFeature (Builders)
-+ (instancetype)toggle:(NSString *)key category:(NSString *)category title:(NSString *)title
-                detail:(NSString *)detail defaultOn:(BOOL)defaultOn init:(UNKNWFeatureInit)init;
-+ (instancetype)stepper:(NSString *)key category:(NSString *)category title:(NSString *)title
-                 detail:(NSString *)detail value:(double)value min:(double)min max:(double)max step:(double)step;
-+ (instancetype)segment:(NSString *)key category:(NSString *)category title:(NSString *)title
-                 detail:(NSString *)detail options:(NSArray<NSString *> *)options defaultIndex:(NSInteger)defaultIndex;
++ (instancetype)toggle:(NSString *)key category:(NSString *)category section:(NSString *)section
+                 title:(NSString *)title detail:(NSString *)detail
+             defaultOn:(BOOL)defaultOn init:(UNKNWFeatureInit)init;
++ (instancetype)stepper:(NSString *)key category:(NSString *)category section:(NSString *)section
+                  title:(NSString *)title detail:(NSString *)detail
+                  value:(double)value min:(double)min max:(double)max step:(double)step;
++ (instancetype)segment:(NSString *)key category:(NSString *)category section:(NSString *)section
+                  title:(NSString *)title detail:(NSString *)detail
+                options:(NSArray<NSString *> *)options defaultIndex:(NSInteger)defaultIndex;
 @end
 
-// Ordered list of every control, excluding the master switch and license row.
+// Every control, excluding the master switch and the license row.
 NSArray<UNKNWFeature *> *UNKNWAllFeatures(void);
 
-// Category headers in display order (derived from the feature list).
+// Top-level categories in display order.
 NSArray<NSString *> *UNKNWCategories(void);
 
-// Features belonging to one category, in registry order.
-NSArray<UNKNWFeature *> *UNKNWFeaturesInCategory(NSString *category);
+// An SF Symbol name for a category's menu icon.
+NSString *UNKNWCategoryIcon(NSString *category);
+
+// Ordered section names within a category ("" for the leading unnamed block).
+NSArray<NSString *> *UNKNWSectionsInCategory(NSString *category);
+
+// Features within one category+section, in registry order.
+NSArray<UNKNWFeature *> *UNKNWFeaturesInCategorySection(NSString *category, NSString *section);

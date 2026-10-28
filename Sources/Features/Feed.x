@@ -1,21 +1,29 @@
 // Feed.
 //
-// Feed-scoped options. Currently: Hide ads / sponsored posts.
+// Feed-scoped options: hide ads, disable video autoplay, hide comments preview.
 //
-// IMPLEMENTATION NOTE — fill this in with Developer Logging:
-//   Hook the feed item/cell model and detect the sponsored/ad flag (observe the
-//   property with Developer Logging while a sponsored post is on screen), then
-//   either remove the item from the data source or collapse its cell to zero
-//   height when kUNKNWHideAdsKey is ON.
+// IMPLEMENTATION NOTES — fill these in with Developer Logging:
+//   HideAds: hook the feed item/cell model, detect the sponsored flag, and drop
+//     or collapse the item when kUNKNWHideAdsKey is ON.
+//   DisableAutoplay: hook the feed video cell's play/willDisplay path and skip
+//     autoplay when kUNKNWFeedDisableAutoplayKey is ON (tap still plays).
+//   HideCommentsPreview: hook the feed cell that shows the comment preview rows
+//     and hide them when kUNKNWHideCommentsPreviewKey is ON.
 
 #import "../UNKNW.h"
 
 %group UNKNWHideAds
-
-// TODO: %hook the feed item model / cell; drop or collapse sponsored items.
-
+// TODO: drop/collapse sponsored feed items.
 %end
 
-void UNKNWInitHideAds(void) {
-    %init(UNKNWHideAds);
-}
+%group UNKNWFeedDisableAutoplay
+// TODO: prevent feed videos from autoplaying.
+%end
+
+%group UNKNWHideCommentsPreview
+// TODO: hide the comment-preview rows under feed posts.
+%end
+
+void UNKNWInitHideAds(void)             { %init(UNKNWHideAds); }
+void UNKNWInitFeedDisableAutoplay(void) { %init(UNKNWFeedDisableAutoplay); }
+void UNKNWInitHideCommentsPreview(void) { %init(UNKNWHideCommentsPreview); }
