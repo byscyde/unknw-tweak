@@ -62,12 +62,16 @@ jobs:
           URL="${BASE_IPA_URL:-$DEFAULT_IPA_URL}"
           echo "Fetching base IPA from: $URL"
           mkdir -p ipa
-          if [ -n "$BASE_IPA_AUTH" ]; then
-            curl -fL -H "$BASE_IPA_AUTH" -o ipa/instagram.ipa "$URL"
-          else
-            curl -fL -o ipa/instagram.ipa "$URL"
+          AUTH=()
+          [ -n "$BASE_IPA_AUTH" ] && AUTH=(-H "$BASE_IPA_AUTH")
+          if ! curl -fL --retry 4 --retry-delay 5 --retry-all-errors "${AUTH[@]}" -o ipa/instagram.ipa "$URL"; then
+            code=$?
+            echo "::error::download failed (curl exit $code); response headers:"
+            curl -sIL "${AUTH[@]}" "$URL" 2>&1 | head -30 || true
+            exit 1
           fi
           ls -la ipa
+          head -c4 ipa/instagram.ipa | od -An -tx1   # expect 50 4b (PK zip)
 
       - name: Clean base (neutralize pre-injected tweak, keep binary intact)
         run: |
