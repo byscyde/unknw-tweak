@@ -59,7 +59,7 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
             [UNKNWFeature toggle:kUNKNWBetaBypassKey category:cFixes section:@""
                            title:@"Bypass beta update gate"
                           detail:@"Skip the \"update Instagram Beta\" screen"
-                       defaultOn:NO init:UNKNWInitBetaBypass],
+                       defaultOn:YES init:UNKNWInitBetaBypass],
 
             // ===== Feed =====
             [UNKNWFeature toggle:kUNKNWHideAdsKey category:cFeed section:@"Posts"

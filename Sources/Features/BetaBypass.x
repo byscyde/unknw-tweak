@@ -23,16 +23,22 @@
     if (![NSStringFromClass([self class]) isEqualToString:kUNKNWNagClassName]) return;
 
     UNKNWLog(@"beta bypass: dismissing update nag");
-    UIViewController *vc = self;
-    if (vc.presentingViewController) {
-        [vc.presentingViewController dismissViewControllerAnimated:NO completion:nil];
-    } else if (vc.navigationController.viewControllers.count > 1) {
-        [vc.navigationController popViewControllerAnimated:NO];
-    } else {
-        [vc.view removeFromSuperview];
-        [vc willMoveToParentViewController:nil];
-        [vc removeFromParentViewController];
-    }
+    __weak UIViewController *vc = self;
+    // Dismiss on the next runloop so we never mutate the view-controller
+    // hierarchy from inside the appearance callback.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *target = vc;
+        if (!target) return;
+        if (target.presentingViewController) {
+            [target.presentingViewController dismissViewControllerAnimated:NO completion:nil];
+        } else if (target.navigationController.viewControllers.count > 1) {
+            [target.navigationController popViewControllerAnimated:NO];
+        } else {
+            [target.view removeFromSuperview];
+            [target willMoveToParentViewController:nil];
+            [target removeFromParentViewController];
+        }
+    });
 }
 
 %end
