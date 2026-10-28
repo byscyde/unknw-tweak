@@ -98,13 +98,21 @@ PLIST
 ldid -S "$FW/CydiaSubstrate"
 
 echo "==> Injecting load command into app binary"
+# Preserve the app's original entitlements (keychain-access-groups, app groups,
+# etc.) so the sideloader re-signs from the real baseline. insert_dylib strips
+# the signature, so capture them first and re-apply after.
+ldid -e "$EXEC" > "$WORK/entitlements.plist" 2>/dev/null || true
 if [ "$(otool -l "$EXEC" | grep -c '@executable_path/Frameworks' || true)" -eq 0 ]; then
     install_name_tool -add_rpath @executable_path/Frameworks "$EXEC" || \
         echo "warning: could not add rpath (continuing; app usually already has it)"
 fi
 "$INSERT_DYLIB" --all-yes --inplace @rpath/UNKNW.dylib "$EXEC" >/dev/null
 otool -L "$EXEC" | grep -q '@rpath/UNKNW.dylib' || die "load command not added"
-ldid -S "$EXEC"
+if [ -s "$WORK/entitlements.plist" ]; then
+    ldid -S"$WORK/entitlements.plist" "$EXEC"
+else
+    ldid -S "$EXEC"
+fi
 
 echo "==> Repacking IPA"
 mkdir -p "$(dirname "$IPA_OUT_ABS")"
