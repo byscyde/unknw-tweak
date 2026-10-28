@@ -1,0 +1,83 @@
+name: Build & Release UNKNW IPA
+
+# Builds UNKNW, injects it into the base Instagram IPA, and publishes the result
+# as a GitHub Release. Runs on a version tag push, or manually.
+#
+# Required repository secret:
+#   BASE_IPA_URL   Direct URL to a DECRYPTED Instagram .ipa (cryptid 0).
+#                  e.g. https://cdn.scyhost.com/com.burbn.instagram_453.0.ipa
+# Optional secret:
+#   BASE_IPA_AUTH  A full curl header for auth, e.g. "Authorization: Bearer XXX".
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag/name for the release (e.g. v453.0-1)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    env:
+      THEOS: ${{ github.workspace }}/theos
+      AZULE_DIR: ${{ github.workspace }}/Azule
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Install apt dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential fakeroot rsync curl perl zip git \
+            libxml2 libtinfo6 xz-utils libplist-2.0-4
+
+      - name: Cache theos toolchain + SDK
+        id: cache-theos
+        uses: actions/cache@v4.1.2
+        with:
+          path: theos
+          key: theos-ios16.5-${{ runner.os }}-v1
+
+      - name: Set up theos
+        if: steps.cache-theos.outputs.cache-hit != 'true'
+        run: bash scripts/setup-theos.sh
+
+      - name: Clone Azule
+        run: git clone --depth 1 https://github.com/Al4ise/Azule "$AZULE_DIR"
+
+      - name: Download base Instagram IPA
+        env:
+          BASE_IPA_URL: ${{ secrets.BASE_IPA_URL }}
+          BASE_IPA_AUTH: ${{ secrets.BASE_IPA_AUTH }}
+        run: |
+          if [ -z "$BASE_IPA_URL" ]; then
+            echo "::error::Set the BASE_IPA_URL repository secret to a decrypted Instagram .ipa URL"; exit 1
+          fi
+          mkdir -p ipa
+          if [ -n "$BASE_IPA_AUTH" ]; then
+            curl -fL -H "$BASE_IPA_AUTH" -o ipa/instagram.ipa "$BASE_IPA_URL"
+          else
+            curl -fL -o ipa/instagram.ipa "$BASE_IPA_URL"
+          fi
+          ls -la ipa
+
+      - name: Build + inject
+        run: |
+          chmod +x package-ipa.sh scripts/setup-theos.sh
+          ./package-ipa.sh ipa/instagram.ipa packages/UNKNW-Instagram.ipa
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2.0.8
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: UNKNW ${{ github.event.inputs.tag || github.ref_name }}
+          body: |
+            UNKNW injected into Instagram (arm64).
+            Import `UNKNW-Instagram.ipa` into Feather (or another sideloader) and install.
+            Two-finger long-press inside Instagram opens the UNKNW panel.
+          files: packages/UNKNW-Instagram.ipa
