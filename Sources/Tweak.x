@@ -69,6 +69,13 @@
         // log and visible in the Diagnostics screen.
         UNKNWInstallCrashLogger();
 
+        // Integrity/attestation bypass is the core enabler that keeps a
+        // re-signed (sideloaded) Instagram from crashing. Load it early and
+        // independently of the master switch / activation so the app is usable;
+        // it is not subject to the crash-loop guard (disabling it would just
+        // reintroduce the crash). Toggle lives in App Fixes, default on.
+        if (UNKNWPrefBool(kUNKNWIntegrityKey, YES)) UNKNWInitIntegrityBypass();
+
         // Install the ungrouped UIWindow hook unconditionally so the settings
         // panel is always reachable.
         %init;
@@ -106,6 +113,7 @@
         NSUInteger loaded = 0;
         for (UNKNWFeature *feature in UNKNWAllFeatures()) {
             if ([feature.key isEqualToString:kUNKNWDebugLoggingKey]) continue; // already loaded
+            if ([feature.key isEqualToString:kUNKNWIntegrityKey]) continue;    // loaded early above
             BOOL isEnabler = [feature.category isEqualToString:@"App Fixes"];
             if (!isEnabler && !activated) continue; // premium gated behind license
             if (feature.initializer && UNKNWPrefBool(feature.key, feature.defaultBool)) {

@@ -52,6 +52,10 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
 
         features = @[
             // ===== App Fixes (enablers for sideloaded installs) =====
+            [UNKNWFeature toggle:kUNKNWIntegrityKey category:cFixes section:@""
+                           title:@"Integrity bypass"
+                          detail:@"Block device attestation so a re-signed install stops crashing (loaded at launch)"
+                       defaultOn:YES init:UNKNWInitIntegrityBypass],
             [UNKNWFeature toggle:kUNKNWKeychainFixKey category:cFixes section:@""
                            title:@"Fix login persistence"
                           detail:@"Keep your session across relaunches on a re-signed install"

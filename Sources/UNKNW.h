@@ -24,6 +24,7 @@
 // App Fixes (enablers for sideloaded installs)
 #define kUNKNWKeychainFixKey        @"UNKNW.keychainFix"
 #define kUNKNWBetaBypassKey         @"UNKNW.betaBypass"
+#define kUNKNWIntegrityKey          @"UNKNW.integrityBypass"
 #define kUNKNWFixesLoadingKey       @"UNKNW._fixesLoading" // crash-loop guard flag
 
 // Feed
@@ -97,6 +98,7 @@ void     UNKNWPrefSetString(NSString *key, NSString *value);
 // %init(group). Registered in Features.m. NULL in the registry = config-only
 // value with no hooks.
 extern void UNKNWInstallCrashLogger(void);
+extern void UNKNWInitIntegrityBypass(void);
 extern void UNKNWInstallKeychainFix(void);
 extern void UNKNWInitBetaBypass(void);
 extern void UNKNWInitHideAds(void);
