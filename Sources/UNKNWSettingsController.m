@@ -120,13 +120,14 @@ static const void *kFeatureKey = &kFeatureKey;
     UITextView *_textView;
 }
 
-- (NSURL *)logURL {
+- (NSURL *)dirURL {
     NSURL *appSupport = [NSFileManager.defaultManager URLForDirectory:NSApplicationSupportDirectory
                                                              inDomain:NSUserDomainMask
                                                     appropriateForURL:nil create:YES error:nil];
-    return [[appSupport URLByAppendingPathComponent:@"UNKNW" isDirectory:YES]
-            URLByAppendingPathComponent:@"classes.log"];
+    return [appSupport URLByAppendingPathComponent:@"UNKNW" isDirectory:YES];
 }
+- (NSURL *)logURL   { return [[self dirURL] URLByAppendingPathComponent:@"classes.log"]; }
+- (NSURL *)crashURL { return [[self dirURL] URLByAppendingPathComponent:@"crash.log"]; }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
@@ -146,17 +147,27 @@ static const void *kFeatureKey = &kFeatureKey;
 }
 
 - (void)reload {
-    NSString *text = [NSString stringWithContentsOfURL:[self logURL] encoding:NSUTF8StringEncoding error:nil];
-    _textView.text = text.length ? text
-        : @"(empty)\n\nEnable Developer Logging (General), force-quit Instagram, reopen, then navigate. Class names are logged here.";
-    if (text.length > 2) {
-        [_textView scrollRangeToVisible:NSMakeRange(_textView.text.length - 1, 1)];
+    NSString *crash = [NSString stringWithContentsOfURL:[self crashURL] encoding:NSUTF8StringEncoding error:nil];
+    NSString *classes = [NSString stringWithContentsOfURL:[self logURL] encoding:NSUTF8StringEncoding error:nil];
+    NSMutableString *out = [NSMutableString string];
+    if (crash.length) {
+        [out appendString:@"════════ CRASH LOG (send this) ════════\n"];
+        [out appendString:crash];
+        [out appendString:@"\n════════ END CRASH LOG ════════\n\n"];
     }
+    if (classes.length) [out appendString:classes];
+    _textView.text = out.length ? out
+        : @"(empty)\n\nNo crash recorded yet. If Instagram crashes, its exact cause appears here at the top on the next launch. Enable Developer Logging (General) to also log view-controller class names.";
+    // Keep the crash block (top) in view rather than scrolling to the bottom.
+    [_textView scrollRangeToVisible:NSMakeRange(0, 1)];
 }
 
 - (void)share {
+    NSMutableArray *items = [NSMutableArray array];
+    if ([NSFileManager.defaultManager fileExistsAtPath:[self crashURL].path]) [items addObject:[self crashURL]];
+    [items addObject:[self logURL]];
     UIActivityViewController *activity =
-        [[UIActivityViewController alloc] initWithActivityItems:@[[self logURL]] applicationActivities:nil];
+        [[UIActivityViewController alloc] initWithActivityItems:items applicationActivities:nil];
     activity.popoverPresentationController.sourceView = self.view;
     activity.popoverPresentationController.sourceRect = CGRectMake(self.view.bounds.size.width - 40, 0, 40, 40);
     [self presentViewController:activity animated:YES completion:nil];
@@ -166,6 +177,7 @@ static const void *kFeatureKey = &kFeatureKey;
 
 - (void)clearLog {
     [@"" writeToURL:[self logURL] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [@"" writeToURL:[self crashURL] atomically:YES encoding:NSUTF8StringEncoding error:nil];
     [self reload];
 }
 

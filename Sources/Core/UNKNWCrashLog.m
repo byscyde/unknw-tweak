@@ -13,6 +13,7 @@
 // is unchanged apart from the extra log lines.
 
 #import "../UNKNW.h"
+#import "../vendor/fishhook.h"
 #import <execinfo.h>
 #import <signal.h>
 #import <fcntl.h>
@@ -21,6 +22,16 @@
 
 static int unknw_crash_fd = -1;
 static NSUncaughtExceptionHandler *unknw_prev_handler = NULL;
+static void UNKNWExceptionHandler(NSException *ex);
+static void (*orig_NSSetUncaughtExceptionHandler)(NSUncaughtExceptionHandler *) = NULL;
+
+// Intercept anyone (e.g. Instagram's own crash reporter) installing a handler:
+// keep OURS installed and chain theirs, so we always see the exception first.
+static void unknw_NSSetUncaughtExceptionHandler(NSUncaughtExceptionHandler *h) {
+    if (h && h != &UNKNWExceptionHandler) unknw_prev_handler = h;
+    if (orig_NSSetUncaughtExceptionHandler) orig_NSSetUncaughtExceptionHandler(&UNKNWExceptionHandler);
+    else NSSetUncaughtExceptionHandler(&UNKNWExceptionHandler);
+}
 
 static NSString *UNKNWCrashLogPath(void) {
     NSURL *appSupport = [NSFileManager.defaultManager URLForDirectory:NSApplicationSupportDirectory
@@ -28,7 +39,9 @@ static NSString *UNKNWCrashLogPath(void) {
                                                     appropriateForURL:nil create:YES error:nil];
     NSURL *dir = [appSupport URLByAppendingPathComponent:@"UNKNW" isDirectory:YES];
     [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
-    return [[dir URLByAppendingPathComponent:@"classes.log"] path];
+    // Dedicated file so a crash is never buried under Developer Logging output;
+    // the Diagnostics screen surfaces it at the top.
+    return [[dir URLByAppendingPathComponent:@"crash.log"] path];
 }
 
 static void UNKNWCrashAppend(NSString *text) {
@@ -88,6 +101,15 @@ void UNKNWInstallCrashLogger(void) {
     if (path) unknw_crash_fd = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND, 0644);
 
     UNKNWCrashAppend([NSString stringWithFormat:@"\n[UNKNW] launch %@ — crash logger armed\n", [NSDate date]]);
+
+    // Make sure a later NSSetUncaughtExceptionHandler (Instagram's crash
+    // reporter) can't silently replace ours.
+    rebind_symbols((struct rebinding[]){
+        {"NSSetUncaughtExceptionHandler",
+         (void *)unknw_NSSetUncaughtExceptionHandler,
+         (void **)&orig_NSSetUncaughtExceptionHandler},
+    }, 1);
+
     UNKNWArmHandlers();
 
     // Re-arm shortly after launch to override any crash handler Instagram's
