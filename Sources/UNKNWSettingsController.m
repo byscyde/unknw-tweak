@@ -111,6 +111,66 @@ static const void *kFeatureKey = &kFeatureKey;
 
 @end
 
+#pragma mark - Diagnostics (class log viewer / share)
+
+@interface UNKNWDiagnosticsController : UIViewController
+@end
+
+@implementation UNKNWDiagnosticsController {
+    UITextView *_textView;
+}
+
+- (NSURL *)logURL {
+    NSURL *appSupport = [NSFileManager.defaultManager URLForDirectory:NSApplicationSupportDirectory
+                                                             inDomain:NSUserDomainMask
+                                                    appropriateForURL:nil create:YES error:nil];
+    return [[appSupport URLByAppendingPathComponent:@"UNKNW" isDirectory:YES]
+            URLByAppendingPathComponent:@"classes.log"];
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"Diagnostics";
+    self.view.backgroundColor = [UIColor systemBackgroundColor];
+    _textView = [[UITextView alloc] initWithFrame:self.view.bounds];
+    _textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _textView.editable = NO;
+    _textView.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
+    [self.view addSubview:_textView];
+    self.navigationItem.rightBarButtonItems = @[
+        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAction target:self action:@selector(share)],
+        [[UIBarButtonItem alloc] initWithTitle:@"Copy" style:UIBarButtonItemStylePlain target:self action:@selector(copyAll)],
+        [[UIBarButtonItem alloc] initWithTitle:@"Clear" style:UIBarButtonItemStylePlain target:self action:@selector(clearLog)],
+    ];
+    [self reload];
+}
+
+- (void)reload {
+    NSString *text = [NSString stringWithContentsOfURL:[self logURL] encoding:NSUTF8StringEncoding error:nil];
+    _textView.text = text.length ? text
+        : @"(empty)\n\nEnable Developer Logging (General), force-quit Instagram, reopen, then navigate. Class names are logged here.";
+    if (text.length > 2) {
+        [_textView scrollRangeToVisible:NSMakeRange(_textView.text.length - 1, 1)];
+    }
+}
+
+- (void)share {
+    UIActivityViewController *activity =
+        [[UIActivityViewController alloc] initWithActivityItems:@[[self logURL]] applicationActivities:nil];
+    activity.popoverPresentationController.sourceView = self.view;
+    activity.popoverPresentationController.sourceRect = CGRectMake(self.view.bounds.size.width - 40, 0, 40, 40);
+    [self presentViewController:activity animated:YES completion:nil];
+}
+
+- (void)copyAll { UIPasteboard.generalPasteboard.string = _textView.text ?: @""; }
+
+- (void)clearLog {
+    [@"" writeToURL:[self logURL] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [self reload];
+}
+
+@end
+
 #pragma mark - Root menu
 
 @implementation UNKNWSettingsController {
@@ -141,7 +201,7 @@ static const void *kFeatureKey = &kFeatureKey;
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == 0) return 1;
     if (section == 1) return (NSInteger)_categories.count;
-    return 1;
+    return 2; // Account & License, Diagnostics
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
@@ -173,14 +233,20 @@ static const void *kFeatureKey = &kFeatureKey;
         return cell;
     }
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    NSString *stored = UNKNWLicense.shared.key;
-    BOOL activated = UNKNWLicense.shared.isActivated;
-    cell.textLabel.text = @"Account & License";
-    cell.detailTextLabel.text = activated ? @"Activated · tap to manage"
-        : (stored.length ? @"Not activated · tap to retry" : @"Tap to enter your license key");
-    cell.imageView.image = [UIImage systemImageNamed:(activated ? @"checkmark.seal" : @"lock")];
-    cell.imageView.tintColor = [UIColor labelColor];
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    cell.imageView.tintColor = [UIColor labelColor];
+    if (indexPath.row == 0) {
+        NSString *stored = UNKNWLicense.shared.key;
+        BOOL activated = UNKNWLicense.shared.isActivated;
+        cell.textLabel.text = @"Account & License";
+        cell.detailTextLabel.text = activated ? @"Activated · tap to manage"
+            : (stored.length ? @"Not activated · tap to retry" : @"Tap to enter your license key");
+        cell.imageView.image = [UIImage systemImageNamed:(activated ? @"checkmark.seal" : @"lock")];
+    } else {
+        cell.textLabel.text = @"Diagnostics";
+        cell.detailTextLabel.text = @"View / share the class log (for hook discovery)";
+        cell.imageView.image = [UIImage systemImageNamed:@"ladybug"];
+    }
     return cell;
 }
 
@@ -190,7 +256,11 @@ static const void *kFeatureKey = &kFeatureKey;
         NSString *category = _categories[indexPath.row];
         [self.navigationController pushViewController:[[UNKNWCategoryController alloc] initWithCategory:category] animated:YES];
     } else if (indexPath.section == 2) {
-        [self presentLicenseSheet];
+        if (indexPath.row == 0) {
+            [self presentLicenseSheet];
+        } else {
+            [self.navigationController pushViewController:[UNKNWDiagnosticsController new] animated:YES];
+        }
     }
 }
 
