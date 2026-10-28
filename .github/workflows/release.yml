@@ -53,22 +53,23 @@ jobs:
 
       - name: Download base Instagram IPA
         env:
-          # Override with the BASE_IPA_URL secret (e.g. your CDN); otherwise
-          # falls back to the decrypted 452 asset already on this repo.
+          # If BASE_IPA_URL (your CDN) is set, curl it. Otherwise pull the base
+          # asset from this repo's release with gh (authenticated; avoids the
+          # public release-assets redirect that fails from Actions).
           BASE_IPA_URL: ${{ secrets.BASE_IPA_URL }}
           BASE_IPA_AUTH: ${{ secrets.BASE_IPA_AUTH }}
-          DEFAULT_IPA_URL: https://github.com/byscyde/unknw-tweak/releases/download/ig-v453/com.burbn.instagram_453.0.ipa.ipa
+          BASE_RELEASE_TAG: ig-v453
+          BASE_ASSET_NAME: com.burbn.instagram_453.0.ipa.ipa
+          GH_TOKEN: ${{ github.token }}
         run: |
-          URL="${BASE_IPA_URL:-$DEFAULT_IPA_URL}"
-          echo "Fetching base IPA from: $URL"
           mkdir -p ipa
-          AUTH=()
-          [ -n "$BASE_IPA_AUTH" ] && AUTH=(-H "$BASE_IPA_AUTH")
-          if ! curl -fL --retry 4 --retry-delay 5 --retry-all-errors "${AUTH[@]}" -o ipa/instagram.ipa "$URL"; then
-            code=$?
-            echo "::error::download failed (curl exit $code); response headers:"
-            curl -sIL "${AUTH[@]}" "$URL" 2>&1 | head -30 || true
-            exit 1
+          if [ -n "$BASE_IPA_URL" ]; then
+            echo "Fetching base IPA from CDN: $BASE_IPA_URL"
+            AUTH=(); [ -n "$BASE_IPA_AUTH" ] && AUTH=(-H "$BASE_IPA_AUTH")
+            curl -fL --retry 4 --retry-delay 5 --retry-all-errors "${AUTH[@]}" -o ipa/instagram.ipa "$BASE_IPA_URL"
+          else
+            echo "Fetching base asset '$BASE_ASSET_NAME' from release '$BASE_RELEASE_TAG'"
+            gh release download "$BASE_RELEASE_TAG" -R "$GITHUB_REPOSITORY" -p "$BASE_ASSET_NAME" -O ipa/instagram.ipa --clobber
           fi
           ls -la ipa
           head -c4 ipa/instagram.ipa | od -An -tx1   # expect 50 4b (PK zip)
