@@ -45,11 +45,22 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
     static NSArray<UNKNWFeature *> *features = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
+        NSString *cFixes = @"App Fixes";
         NSString *cFeed = @"Feed", *cReels = @"Reels", *cStories = @"Stories";
         NSString *cMsg = @"Messages", *cProfile = @"Profile";
         NSString *cDownload = @"Download Manager", *cGeneral = @"General";
 
         features = @[
+            // ===== App Fixes (enablers for sideloaded installs) =====
+            [UNKNWFeature toggle:kUNKNWKeychainFixKey category:cFixes section:@""
+                           title:@"Fix login persistence"
+                          detail:@"Keep your session across relaunches on a re-signed install"
+                       defaultOn:YES init:UNKNWInstallKeychainFix],
+            [UNKNWFeature toggle:kUNKNWBetaBypassKey category:cFixes section:@""
+                           title:@"Bypass beta update gate"
+                          detail:@"Skip the \"update Instagram Beta\" screen (needs the gate hook)"
+                       defaultOn:YES init:UNKNWInitBetaBypass],
+
             // ===== Feed =====
             [UNKNWFeature toggle:kUNKNWHideAdsKey category:cFeed section:@"Posts"
                            title:@"Hide ads" detail:@"Remove sponsored posts from the feed"
@@ -164,6 +175,7 @@ NSString *UNKNWCategoryIcon(NSString *category) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         icons = @{
+            @"App Fixes": @"wrench.and.screwdriver",
             @"Feed": @"square.stack",
             @"Reels": @"play.rectangle",
             @"Stories": @"circle.dashed",

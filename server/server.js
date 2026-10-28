@@ -20,6 +20,7 @@ const express = require('express');
 const Database = require('better-sqlite3');
 const crypto = require('crypto');
 const path = require('path');
+const patreon = require('./patreon');
 
 const PORT = process.env.PORT || 8080;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'unknw.db');
@@ -53,6 +54,20 @@ db.exec(`
   );
 `);
 
+// Migrations (safe to run repeatedly) for Patreon-linked licenses.
+for (const stmt of [
+  'ALTER TABLE licenses ADD COLUMN patreon_user_id TEXT',
+  "ALTER TABLE licenses ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'",
+]) { try { db.exec(stmt); } catch (_e) { /* column already exists */ } }
+db.exec(`
+  CREATE TABLE IF NOT EXISTS patreon_tokens (
+    patreon_user_id TEXT PRIMARY KEY,
+    access_token TEXT, refresh_token TEXT, expires_at INTEGER,
+    email TEXT, full_name TEXT, updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_licenses_patreon ON licenses(patreon_user_id);
+`);
+
 const now = () => Math.floor(Date.now() / 1000);
 
 function activeLicense(key) {
@@ -67,7 +82,82 @@ const deviceCount = (key) =>
   db.prepare('SELECT COUNT(*) AS n FROM activations WHERE license_key = ?').get(key).n;
 
 const app = express();
-app.use(express.json({ limit: '256kb' }));
+app.use(express.json({ limit: '512kb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
+
+// Find or lazily create a license tied to a Patreon user.
+function licenseForPatreon(patreonUserId) {
+  const existing = db.prepare('SELECT * FROM licenses WHERE patreon_user_id = ?').get(patreonUserId);
+  if (existing) return existing;
+  const key = crypto.randomBytes(18).toString('base64url');
+  const maxDevices = Math.max(1, parseInt(process.env.DEFAULT_MAX_DEVICES || '1', 10));
+  db.prepare('INSERT INTO licenses (key, note, created_at, expires_at, max_devices, patreon_user_id, source) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(key, `patreon:${patreonUserId}`, now(), null, maxDevices, patreonUserId, 'patreon');
+  return db.prepare('SELECT * FROM licenses WHERE key = ?').get(key);
+}
+
+const appRedirect = (res, params) =>
+  res.redirect(302, `${patreon.APP_SCHEME}://auth?${new URLSearchParams(params).toString()}`);
+
+// Start Patreon OAuth (opened by the app's ASWebAuthenticationSession).
+app.get('/patreon/login', (req, res) => {
+  if (!patreon.configured()) return res.status(503).send('Patreon not configured');
+  const deviceId = String(req.query.deviceId || '');
+  const state = Buffer.from(JSON.stringify({ d: deviceId, n: crypto.randomBytes(6).toString('hex') })).toString('base64url');
+  res.redirect(302, patreon.authorizeURL(state));
+});
+
+// OAuth callback: verify membership, issue/revoke a license, return to the app.
+app.get('/patreon/callback', async (req, res) => {
+  try {
+    const { code, state } = req.query;
+    if (!code) return appRedirect(res, { status: 'error', message: 'no code' });
+    let deviceId = '';
+    try { deviceId = JSON.parse(Buffer.from(String(state || ''), 'base64url').toString()).d || ''; } catch (_e) {}
+
+    const tok = await patreon.exchangeCode(String(code));
+    const m = await patreon.fetchMembership(tok.access_token);
+    if (!m.patreonUserId) return appRedirect(res, { status: 'error', message: 'no identity' });
+
+    db.prepare(`INSERT INTO patreon_tokens (patreon_user_id, access_token, refresh_token, expires_at, email, full_name, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(patreon_user_id) DO UPDATE SET access_token=excluded.access_token,
+                  refresh_token=excluded.refresh_token, expires_at=excluded.expires_at,
+                  email=excluded.email, full_name=excluded.full_name, updated_at=excluded.updated_at`)
+      .run(m.patreonUserId, tok.access_token, tok.refresh_token || null, now() + (tok.expires_in || 0), m.email || null, m.name || null, now());
+
+    if (!m.isActivePatron) {
+      db.prepare('UPDATE licenses SET revoked = 1 WHERE patreon_user_id = ?').run(m.patreonUserId);
+      return appRedirect(res, { status: 'denied', message: 'Not an active patron' });
+    }
+
+    const license = licenseForPatreon(m.patreonUserId);
+    db.prepare('UPDATE licenses SET revoked = 0 WHERE key = ?').run(license.key);
+    if (deviceId) {
+      const bound = db.prepare('SELECT 1 FROM activations WHERE license_key = ? AND device_id = ?').get(license.key, deviceId);
+      if (!bound && deviceCount(license.key) < license.max_devices) {
+        db.prepare('INSERT INTO activations (license_key, device_id, device_name, activated_at, last_seen) VALUES (?, ?, ?, ?, ?)')
+          .run(license.key, deviceId, 'patreon-login', now(), now());
+      }
+    }
+    return appRedirect(res, { status: 'ok', key: license.key });
+  } catch (e) {
+    return appRedirect(res, { status: 'error', message: e.message });
+  }
+});
+
+// Patreon webhooks: revoke/grant in real time on membership changes.
+app.post('/patreon/webhook', (req, res) => {
+  if (!patreon.verifyWebhook(req.rawBody, req.get('X-Patreon-Signature'))) return res.status(403).end();
+  const member = (req.body && req.body.data) || {};
+  const status = member.attributes && member.attributes.patron_status;
+  const userRel = member.relationships && member.relationships.user && member.relationships.user.data;
+  const patreonUserId = userRel && userRel.id;
+  if (patreonUserId) {
+    db.prepare('UPDATE licenses SET revoked = ? WHERE patreon_user_id = ?')
+      .run(status !== 'active_patron' ? 1 : 0, String(patreonUserId));
+  }
+  res.status(200).end();
+});
 
 // Bind a device to a license (idempotent for an already-bound device).
 app.post('/v1/activate', (req, res) => {

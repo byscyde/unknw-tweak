@@ -72,6 +72,10 @@
         // revocation/expiry propagate (never blocks startup).
         [[UNKNWLicense shared] refreshOnLaunch];
 
+        // Developer Logging is ungated — it's a diagnostic, and it must work
+        // before activation (e.g. to capture the beta screen's class name).
+        if (UNKNWPrefBool(kUNKNWDebugLoggingKey, NO)) UNKNWInitDebugLogging();
+
         if (!UNKNWPrefBool(kUNKNWEnabledKey, YES)) {
             UNKNWLog(@"master switch off — settings reachable, no features loaded");
             return;
@@ -86,6 +90,7 @@
 
         NSUInteger loaded = 0;
         for (UNKNWFeature *feature in UNKNWAllFeatures()) {
+            if ([feature.key isEqualToString:kUNKNWDebugLoggingKey]) continue; // already loaded
             if (feature.initializer && UNKNWPrefBool(feature.key, feature.defaultBool)) {
                 feature.initializer();
                 loaded++;

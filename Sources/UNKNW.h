@@ -21,6 +21,10 @@
 #define kUNKNWDeviceIdKey           @"UNKNW.deviceId"       // persistent per-install device id
 #define kUNKNWActivatedKey          @"UNKNW.activated"      // cached activation state (gate)
 
+// App Fixes (enablers for sideloaded installs)
+#define kUNKNWKeychainFixKey        @"UNKNW.keychainFix"
+#define kUNKNWBetaBypassKey         @"UNKNW.betaBypass"
+
 // Feed
 #define kUNKNWHideAdsKey            @"UNKNW.hideAds"
 #define kUNKNWFeedDisableAutoplayKey @"UNKNW.feedDisableAutoplay"
@@ -91,6 +95,8 @@ void     UNKNWPrefSetString(NSString *key, NSString *value);
 // Each is defined in its feature file under Sources/Features and runs its own
 // %init(group). Registered in Features.m. NULL in the registry = config-only
 // value with no hooks.
+extern void UNKNWInstallKeychainFix(void);
+extern void UNKNWInitBetaBypass(void);
 extern void UNKNWInitHideAds(void);
 extern void UNKNWInitFeedDisableAutoplay(void);
 extern void UNKNWInitHideCommentsPreview(void);
