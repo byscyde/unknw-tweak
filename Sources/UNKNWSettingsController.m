@@ -225,6 +225,27 @@ static const void *kFeatureKey = &kFeatureKey;
     }
 }
 
+#pragma mark UIGestureRecognizerDelegate
+
+// The Home-icon gesture should only begin when the long-press lands on the
+// bottom-left corner (where Instagram's Home tab sits). The two-finger gesture
+// has no location constraint. Never block the app's own recognizers.
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
+    if (![gesture.name isEqualToString:@"UNKNWHomeGesture"]) return YES;
+    UIView *view = touch.window ?: touch.view;
+    if (!view) return NO;
+    CGPoint point = [touch locationInView:view];
+    CGSize size = view.bounds.size;
+    BOOL inTabBarBand = point.y >= size.height - 100.0;
+    BOOL inHomeColumn = point.x <= size.width * 0.25;
+    return inTabBarBand && inHomeColumn;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture
+shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
+    return YES;
+}
+
 - (UIViewController *)topViewController {
     UIWindow *keyWindow = nil;
     for (UIWindow *window in UIApplication.sharedApplication.windows) {

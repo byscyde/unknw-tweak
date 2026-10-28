@@ -6,17 +6,17 @@
 # step on their side. Signing is still performed by the sideloader with the
 # user's own certificate — inherent to a non-jailbroken install.
 #
-# The tweak's only substrate dependency is MSHookMessageEx (Obj-C method
-# swizzling), so instead of fetching a full Substrate/ElleKit this script builds
-# a tiny self-contained CydiaSubstrate shim (substrate/CydiaSubstrate.m) and
-# bundles it. Azule is used only to add the dylib load command + rpath.
+# Injection is done with explicit tools (no reliance on an external wrapper
+# script): the dylib is built unstripped so install_name_tool can rewrite its
+# load paths to @rpath, a self-contained CydiaSubstrate shim is bundled, and the
+# load command is added to the app binary with insert_dylib.
 #
 # Usage:
 #   ./package-ipa.sh path/to/Instagram.ipa [output.ipa]
 #
-# Requirements: theos with an iOS SDK + toolchain whose bin has clang, ldid,
-# otool, install_name_tool, lipo; Azule (https://github.com/Al4ise/Azule);
-# libplist runtime (for Azule's plist tool); zip/unzip.
+# Requirements: theos with an iOS SDK + toolchain (clang, ldid, otool,
+# install_name_tool in its bin); insert_dylib (from Azule's bin/linux, or set
+# INSERT_DYLIB); python3; zip/unzip.
 
 set -euo pipefail
 
@@ -25,24 +25,28 @@ IPA_OUT="${2:-packages/UNKNW-Instagram.ipa}"
 : "${THEOS:=$HOME/theos}"
 : "${AZULE_DIR:=$HOME/Azule}"
 : "${TOOLCHAIN_BIN:=$THEOS/toolchain/linux/iphone/bin}"
+: "${INSERT_DYLIB:=$AZULE_DIR/bin/linux/insert_dylib}"
 SDK="${SDK:-$(ls -d "$THEOS"/sdks/iPhoneOS*.sdk 2>/dev/null | sort -V | tail -1)}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+SUBSTRATE_PATH="/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate"
 
 die() { echo "error: $*" >&2; exit 1; }
 
 [[ -n "$IPA_IN" ]] || die "usage: ./package-ipa.sh path/to/Instagram.ipa [output.ipa]"
 [[ -f "$IPA_IN" ]] || die "input .ipa not found: $IPA_IN"
 [[ -d "$THEOS" ]] || die "THEOS not found at $THEOS"
-[[ -n "$SDK" && -d "$SDK" ]] || die "no iOS SDK found under $THEOS/sdks"
-[[ -x "$AZULE_DIR/azule" ]] || die "Azule not found at $AZULE_DIR (git clone https://github.com/Al4ise/Azule)"
+[[ -n "$SDK" && -d "$SDK" ]] || die "no iOS SDK under $THEOS/sdks"
+[[ -x "$INSERT_DYLIB" ]] || die "insert_dylib not found at $INSERT_DYLIB (git clone https://github.com/Al4ise/Azule, or set INSERT_DYLIB)"
 
 export PATH="$TOOLCHAIN_BIN:$PATH"
+IPA_OUT_ABS="$ROOT/$IPA_OUT"; case "$IPA_OUT" in /*) IPA_OUT_ABS="$IPA_OUT";; esac
 
-echo "==> Building UNKNW"
-( cd "$ROOT" && env -u PATH PATH="/usr/bin:/bin:/usr/local/bin" THEOS="$THEOS" make package FINALPACKAGE=1 )
-DEB="$(ls -t "$ROOT"/packages/*.deb 2>/dev/null | head -1 || true)"
-[[ -n "$DEB" ]] || die "no .deb produced"
-echo "    $DEB"
+echo "==> Building UNKNW (optimized, unstripped)"
+( cd "$ROOT" && env -u PATH PATH="/usr/bin:/bin:/usr/local/bin" THEOS="$THEOS" \
+    make clean >/dev/null 2>&1; env -u PATH PATH="$TOOLCHAIN_BIN:/usr/bin:/bin" THEOS="$THEOS" \
+    make package FINALPACKAGE=1 STRIP=/bin/true )
+DYLIB="$ROOT/.theos/obj/UNKNW.dylib"
+[[ -f "$DYLIB" ]] || die "dylib not found at $DYLIB"
 
 echo "==> Building CydiaSubstrate shim (arm64)"
 clang -target arm64-apple-ios14.0 -isysroot "$SDK" -dynamiclib \
@@ -51,19 +55,30 @@ clang -target arm64-apple-ios14.0 -isysroot "$SDK" -dynamiclib \
     -o "$ROOT/substrate/CydiaSubstrate" "$ROOT/substrate/CydiaSubstrate.m"
 ldid -S "$ROOT/substrate/CydiaSubstrate"
 
-echo "==> Injecting dylib + rpath with Azule"
 WORK="$(mktemp -d)"
-"$AZULE_DIR/azule" -j -U -n UNKNW -i "$IPA_IN" -o "$WORK" -f "$DEB"
-RESULT="$(ls -t "$WORK"/*.ipa 2>/dev/null | head -1 || true)"
-[[ -n "$RESULT" ]] || die "Azule produced no .ipa"
+trap 'rm -rf "$WORK"' EXIT
 
-echo "==> Bundling CydiaSubstrate.framework into the app"
-APPREL="$(cd "$WORK" && unzip -Z1 "$RESULT" | grep -oE '^Payload/[^/]+\.app/' | head -1)"
-FWREL="${APPREL}Frameworks/CydiaSubstrate.framework"
-STAGE="$(mktemp -d)"
-mkdir -p "$STAGE/$FWREL"
-cp "$ROOT/substrate/CydiaSubstrate" "$STAGE/$FWREL/CydiaSubstrate"
-cat > "$STAGE/$FWREL/Info.plist" <<'PLIST'
+echo "==> Rewriting dylib load paths for sideload"
+cp "$DYLIB" "$WORK/UNKNW.dylib"
+install_name_tool -id @rpath/UNKNW.dylib "$WORK/UNKNW.dylib"
+install_name_tool -change "$SUBSTRATE_PATH" @rpath/CydiaSubstrate.framework/CydiaSubstrate "$WORK/UNKNW.dylib"
+ldid -S "$WORK/UNKNW.dylib"
+
+echo "==> Unpacking base IPA"
+unzip -q "$IPA_IN" -d "$WORK/app"
+APP="$(find "$WORK/app/Payload" -maxdepth 1 -name '*.app' | head -1)"
+[[ -n "$APP" ]] || die "no .app in IPA"
+EXECNAME="$(python3 -I -c "import plistlib;print(plistlib.load(open('$APP/Info.plist','rb'))['CFBundleExecutable'])")"
+EXEC="$APP/$EXECNAME"
+[[ -f "$EXEC" ]] || die "executable $EXECNAME not found"
+mkdir -p "$APP/Frameworks"
+
+echo "==> Bundling UNKNW.dylib + CydiaSubstrate.framework"
+cp "$WORK/UNKNW.dylib" "$APP/Frameworks/UNKNW.dylib"
+FW="$APP/Frameworks/CydiaSubstrate.framework"
+mkdir -p "$FW"
+cp "$ROOT/substrate/CydiaSubstrate" "$FW/CydiaSubstrate"
+cat > "$FW/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -80,11 +95,21 @@ cat > "$STAGE/$FWREL/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
-( cd "$STAGE" && zip -gq "$RESULT" "$FWREL/CydiaSubstrate" "$FWREL/Info.plist" )
+ldid -S "$FW/CydiaSubstrate"
 
-mkdir -p "$(dirname "$ROOT/$IPA_OUT")"
-cp "$RESULT" "$ROOT/$IPA_OUT"
-rm -rf "$WORK" "$STAGE"
+echo "==> Injecting load command into app binary"
+if [ "$(otool -l "$EXEC" | grep -c '@executable_path/Frameworks' || true)" -eq 0 ]; then
+    install_name_tool -add_rpath @executable_path/Frameworks "$EXEC" || \
+        echo "warning: could not add rpath (continuing; app usually already has it)"
+fi
+"$INSERT_DYLIB" --all-yes --inplace @rpath/UNKNW.dylib "$EXEC" >/dev/null
+otool -L "$EXEC" | grep -q '@rpath/UNKNW.dylib' || die "load command not added"
+ldid -S "$EXEC"
 
-echo "==> Done: $IPA_OUT"
-echo "    Hand this .ipa to users; they import it into Feather and install."
+echo "==> Repacking IPA"
+mkdir -p "$(dirname "$IPA_OUT_ABS")"
+rm -f "$IPA_OUT_ABS"
+( cd "$WORK/app" && zip -qry "$IPA_OUT_ABS" Payload )
+
+echo "==> Done: $IPA_OUT_ABS"
+echo "    Import into Feather and install. Two-finger long-press (or long-press the Home tab) opens UNKNW."

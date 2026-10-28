@@ -39,21 +39,60 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
     static NSArray<UNKNWFeature *> *features = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        NSString *catProfile  = @"Profile Analyzer";
+        NSString *catFeed     = @"Feed";
+        NSString *catProfile  = @"Profile";
+        NSString *catDownload = @"Download Manager";
         NSString *catStories  = @"Stories";
-        NSString *catMedia    = @"Media Downloader";
-        NSString *catPrivacy  = @"Privacy";
-        NSString *catMessages = @"Messages";
         NSString *catReels    = @"Reels";
-        NSString *catUtil     = @"Utilities & Customization";
-        NSString *catDev      = @"Developer";
+        NSString *catMessages = @"Messages";
+        NSString *catGeneral  = @"General";
 
         features = @[
-            // --- Profile Analyzer --------------------------------------------
+            // --- Feed --------------------------------------------------------
+            [UNKNWFeature toggle:kUNKNWHideAdsKey category:catFeed
+                           title:@"Hide ads"
+                          detail:@"Remove sponsored posts from the feed"
+                       defaultOn:NO init:UNKNWInitHideAds],
+            [UNKNWFeature toggle:kUNKNWConfirmLikeKey category:catFeed
+                           title:@"Confirm likes"
+                          detail:@"Ask before liking to avoid accidental taps"
+                       defaultOn:NO init:UNKNWInitConfirmLike],
+            [UNKNWFeature toggle:kUNKNWCopyTextKey category:catFeed
+                           title:@"Copy text"
+                          detail:@"Long-press to copy captions and comments"
+                       defaultOn:NO init:UNKNWInitCopyText],
+            [UNKNWFeature toggle:kUNKNWDetailedDatesKey category:catFeed
+                           title:@"Detailed dates"
+                          detail:@"Show full timestamps on posts and stories"
+                       defaultOn:NO init:UNKNWInitDetailedDates],
+
+            // --- Profile -----------------------------------------------------
             [UNKNWFeature toggle:kUNKNWProfileAnalyzerKey category:catProfile
                            title:@"Profile Analyzer"
                           detail:@"Track unfollowers, non-followers-back, and profile changes"
                        defaultOn:NO init:UNKNWInitProfileAnalyzer],
+            [UNKNWFeature toggle:kUNKNWConfirmFollowKey category:catProfile
+                           title:@"Confirm follows"
+                          detail:@"Ask before following/unfollowing"
+                       defaultOn:NO init:UNKNWInitConfirmFollow],
+
+            // --- Download Manager --------------------------------------------
+            [UNKNWFeature toggle:kUNKNWMediaDownloaderKey category:catDownload
+                           title:@"Media Downloader"
+                          detail:@"Download posts, reels, stories and post audio"
+                       defaultOn:NO init:UNKNWInitMediaDownloader],
+            [UNKNWFeature toggle:kUNKNWMediaDMKey category:catDownload
+                           title:@"Allow DM media"
+                          detail:@"Include media received in direct messages"
+                       defaultOn:NO init:NULL],
+            [UNKNWFeature segment:kUNKNWMediaDestKey category:catDownload
+                            title:@"Save to"
+                           detail:@"Where downloaded media is stored"
+                          options:@[@"Vault", @"Photos"] defaultIndex:0],
+            [UNKNWFeature segment:kUNKNWMediaAlbumKey category:catDownload
+                            title:@"Photos album"
+                           detail:@"Album used when saving to Photos"
+                          options:@[@"UNKNW", @"Instagram", @"Camera Roll"] defaultIndex:0],
 
             // --- Stories -----------------------------------------------------
             [UNKNWFeature toggle:kUNKNWStoriesArchiveKey category:catStories
@@ -64,60 +103,10 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
                            title:@"Auto-download Stories"
                           detail:@"Save each story to the vault as you post it"
                        defaultOn:NO init:NULL],
-
-            // --- Media Downloader --------------------------------------------
-            [UNKNWFeature toggle:kUNKNWMediaDownloaderKey category:catMedia
-                           title:@"Media Downloader"
-                          detail:@"Download posts, reels, stories and post audio"
-                       defaultOn:NO init:UNKNWInitMediaDownloader],
-            [UNKNWFeature toggle:kUNKNWMediaDMKey category:catMedia
-                           title:@"Allow DM media"
-                          detail:@"Include media received in direct messages"
-                       defaultOn:NO init:NULL],
-            [UNKNWFeature segment:kUNKNWMediaDestKey category:catMedia
-                            title:@"Save to"
-                           detail:@"Where downloaded media is stored"
-                          options:@[@"Vault", @"Photos"] defaultIndex:0],
-            [UNKNWFeature segment:kUNKNWMediaAlbumKey category:catMedia
-                            title:@"Photos album"
-                           detail:@"Album used when saving to Photos"
-                          options:@[@"UNKNW", @"Instagram", @"Camera Roll"] defaultIndex:0],
-
-            // --- Privacy -----------------------------------------------------
-            [UNKNWFeature toggle:kUNKNWHideStorySeenKey category:catPrivacy
+            [UNKNWFeature toggle:kUNKNWHideStorySeenKey category:catStories
                            title:@"Hide story seen"
                           detail:@"View stories without sending a seen receipt"
                        defaultOn:NO init:UNKNWInitHideStorySeen],
-            [UNKNWFeature toggle:kUNKNWHideDMSeenKey category:catPrivacy
-                           title:@"Hide DM read receipts"
-                          detail:@"Read messages without marking them seen"
-                       defaultOn:NO init:UNKNWInitHideDMSeen],
-            [UNKNWFeature toggle:kUNKNWManualSeenKey category:catPrivacy
-                           title:@"Send seen manually"
-                          detail:@"Add a one-tap button to send the seen receipt yourself"
-                       defaultOn:NO init:NULL],
-
-            // --- Messages ----------------------------------------------------
-            [UNKNWFeature toggle:kUNKNWKeepUnsentKey category:catMessages
-                           title:@"Keep unsent messages"
-                          detail:@"Retain messages that were unsent after you received them"
-                       defaultOn:NO init:UNKNWInitKeepUnsent],
-            [UNKNWFeature toggle:kUNKNWHideTypingKey category:catMessages
-                           title:@"Hide typing indicator"
-                          detail:@"Don't broadcast that you're typing"
-                       defaultOn:NO init:UNKNWInitHideTyping],
-            [UNKNWFeature toggle:kUNKNWDownloadAudioKey category:catMessages
-                           title:@"Download audio messages"
-                          detail:@"Save voice messages to the vault"
-                       defaultOn:NO init:UNKNWInitDownloadAudioMsg],
-            [UNKNWFeature toggle:kUNKNWSendAudioFileKey category:catMessages
-                           title:@"Send audio from file"
-                          detail:@"Send a voice message from an audio file or a video's track"
-                       defaultOn:NO init:UNKNWInitSendAudioFromFile],
-            [UNKNWFeature toggle:kUNKNWConfirmCallsKey category:catMessages
-                           title:@"Confirm call actions"
-                          detail:@"Ask before starting or joining a call"
-                       defaultOn:NO init:UNKNWInitConfirmCalls],
 
             // --- Reels -------------------------------------------------------
             [UNKNWFeature toggle:kUNKNWReelsAutoAdvanceKey category:catReels
@@ -133,26 +122,38 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
                            detail:@"Reels per session when limiting is on"
                             value:30 min:5 max:200 step:5],
 
-            // --- Utilities & Customization -----------------------------------
-            [UNKNWFeature toggle:kUNKNWConfirmLikeKey category:catUtil
-                           title:@"Confirm likes"
-                          detail:@"Ask before liking to avoid accidental taps"
-                       defaultOn:NO init:UNKNWInitConfirmLike],
-            [UNKNWFeature toggle:kUNKNWConfirmFollowKey category:catUtil
-                           title:@"Confirm follows"
-                          detail:@"Ask before following/unfollowing"
-                       defaultOn:NO init:UNKNWInitConfirmFollow],
-            [UNKNWFeature toggle:kUNKNWCopyTextKey category:catUtil
-                           title:@"Copy text"
-                          detail:@"Long-press to copy captions, comments and bios"
-                       defaultOn:NO init:UNKNWInitCopyText],
-            [UNKNWFeature toggle:kUNKNWDetailedDatesKey category:catUtil
-                           title:@"Detailed dates"
-                          detail:@"Show full timestamps on posts, stories and last-active"
-                       defaultOn:NO init:UNKNWInitDetailedDates],
+            // --- Messages ----------------------------------------------------
+            [UNKNWFeature toggle:kUNKNWKeepUnsentKey category:catMessages
+                           title:@"Keep unsent messages"
+                          detail:@"Retain messages that were unsent after you received them"
+                       defaultOn:NO init:UNKNWInitKeepUnsent],
+            [UNKNWFeature toggle:kUNKNWHideTypingKey category:catMessages
+                           title:@"Hide typing indicator"
+                          detail:@"Don't broadcast that you're typing"
+                       defaultOn:NO init:UNKNWInitHideTyping],
+            [UNKNWFeature toggle:kUNKNWHideDMSeenKey category:catMessages
+                           title:@"Hide DM read receipts"
+                          detail:@"Read messages without marking them seen"
+                       defaultOn:NO init:UNKNWInitHideDMSeen],
+            [UNKNWFeature toggle:kUNKNWManualSeenKey category:catMessages
+                           title:@"Send seen manually"
+                          detail:@"Add a one-tap button to send the seen receipt yourself"
+                       defaultOn:NO init:NULL],
+            [UNKNWFeature toggle:kUNKNWDownloadAudioKey category:catMessages
+                           title:@"Download audio messages"
+                          detail:@"Save voice messages to the vault"
+                       defaultOn:NO init:UNKNWInitDownloadAudioMsg],
+            [UNKNWFeature toggle:kUNKNWSendAudioFileKey category:catMessages
+                           title:@"Send audio from file"
+                          detail:@"Send a voice message from an audio file or a video's track"
+                       defaultOn:NO init:UNKNWInitSendAudioFromFile],
+            [UNKNWFeature toggle:kUNKNWConfirmCallsKey category:catMessages
+                           title:@"Confirm call actions"
+                          detail:@"Ask before starting or joining a call"
+                       defaultOn:NO init:UNKNWInitConfirmCalls],
 
-            // --- Developer ---------------------------------------------------
-            [UNKNWFeature toggle:kUNKNWDebugLoggingKey category:catDev
+            // --- General -----------------------------------------------------
+            [UNKNWFeature toggle:kUNKNWDebugLoggingKey category:catGeneral
                            title:@"Developer Logging"
                           detail:@"Print view-controller class names to the console"
                        defaultOn:NO init:UNKNWInitDebugLogging],

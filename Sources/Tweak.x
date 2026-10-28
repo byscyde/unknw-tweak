@@ -34,13 +34,27 @@
             return; // already installed on this window
         }
     }
-    UILongPressGestureRecognizer *recognizer =
-        [[UILongPressGestureRecognizer alloc] initWithTarget:[UNKNWGestureHandler shared]
-                                                      action:@selector(handleGesture:)];
-    recognizer.numberOfTouchesRequired = 2;   // two-finger ...
-    recognizer.minimumPressDuration = 0.8;    // ... long-press opens UNKNW
-    recognizer.name = @"UNKNWSettingsGesture";
-    [self addGestureRecognizer:recognizer];
+    UNKNWGestureHandler *handler = [UNKNWGestureHandler shared];
+
+    // Two-finger long-press anywhere opens the panel (always available).
+    UILongPressGestureRecognizer *twoFinger =
+        [[UILongPressGestureRecognizer alloc] initWithTarget:handler action:@selector(handleGesture:)];
+    twoFinger.numberOfTouchesRequired = 2;
+    twoFinger.minimumPressDuration = 0.8;
+    twoFinger.name = @"UNKNWSettingsGesture";
+    twoFinger.delegate = handler;
+    [self addGestureRecognizer:twoFinger];
+
+    // Single-finger long-press on the Home-tab corner also opens the panel. The
+    // delegate restricts it to that corner and lets the app's gestures proceed.
+    UILongPressGestureRecognizer *homeHold =
+        [[UILongPressGestureRecognizer alloc] initWithTarget:handler action:@selector(handleGesture:)];
+    homeHold.numberOfTouchesRequired = 1;
+    homeHold.minimumPressDuration = 0.6;
+    homeHold.name = @"UNKNWHomeGesture";
+    homeHold.cancelsTouchesInView = NO;
+    homeHold.delegate = handler;
+    [self addGestureRecognizer:homeHold];
 }
 
 %end

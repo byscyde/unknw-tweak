@@ -19,6 +19,9 @@
 #define kUNKNWEnabledKey            @"UNKNW.enabled"        // master switch
 #define kUNKNWLicenseKeyKey         @"UNKNW.licenseKey"     // stored license key
 
+// Feed
+#define kUNKNWHideAdsKey            @"UNKNW.hideAds"
+
 // Profile Analyzer
 #define kUNKNWProfileAnalyzerKey    @"UNKNW.profileAnalyzer"
 
@@ -84,6 +87,7 @@ void     UNKNWPrefSetString(NSString *key, NSString *value);
 // Each is defined in its feature file under Sources/Features and runs its own
 // %init(group). Registered in Features.m. NULL in the registry = config-only
 // value with no hooks.
+extern void UNKNWInitHideAds(void);
 extern void UNKNWInitProfileAnalyzer(void);
 extern void UNKNWInitStoriesArchive(void);
 extern void UNKNWInitMediaDownloader(void);
