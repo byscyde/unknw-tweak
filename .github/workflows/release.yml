@@ -118,12 +118,7 @@ jobs:
           chmod +x package-ipa.sh
           mkdir -p packages
           set -o pipefail
-          # Original: Regram stripped out, UNKNW injected into the clean base.
           ./package-ipa.sh ipa/clean.ipa packages/UNKNW-Gram.ipa 2>&1 | tee packages/_build.log
-          # Diagnostic/interim: Regram LEFT INTACT, UNKNW injected alongside it.
-          # If this one is stable but UNKNW-Gram.ipa is not, the de-regram step
-          # (removing Regram's enabler fixes) is the cause.
-          ./package-ipa.sh ipa/instagram.ipa packages/UNKNW-Gram-REGRAM.ipa 2>&1 | tee -a packages/_build.log
           echo "ok=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish build log on failure (readable)
@@ -145,10 +140,6 @@ jobs:
           name: UNKNW ${{ github.event.inputs.tag || 'latest' }}
           body: |
             UNKNW injected into Instagram (arm64).
-            - `UNKNW-Gram.ipa` — Regram removed, UNKNW only (the product).
-            - `UNKNW-Gram-REGRAM.ipa` — Regram kept intact + UNKNW (diagnostic/interim).
-            Import into Feather (or another sideloader) and install.
+            Import `UNKNW-Gram.ipa` into Feather (or another sideloader) and install.
             Two-finger long-press (or long-press the Home tab) opens the UNKNW panel.
-          files: |
-            packages/UNKNW-Gram.ipa
-            packages/UNKNW-Gram-REGRAM.ipa
+          files: packages/UNKNW-Gram.ipa

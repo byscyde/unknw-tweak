@@ -18,6 +18,6 @@ UNKNW_LOGOS_DEFAULT_GENERATOR = internal
 # The template file uses .example so it is intentionally excluded.
 UNKNW_FILES = $(wildcard Sources/*.x) $(wildcard Sources/*.m) $(wildcard Sources/Core/*.m) $(wildcard Sources/vendor/*.c) $(wildcard Sources/Features/*.x)
 UNKNW_CFLAGS = -fobjc-arc -ISources
-UNKNW_FRAMEWORKS = UIKit Foundation QuartzCore Photos AVFoundation Security DeviceCheck
+UNKNW_FRAMEWORKS = UIKit Foundation QuartzCore Photos AVFoundation Security
 
 include $(THEOS_MAKE_PATH)/tweak.mk
