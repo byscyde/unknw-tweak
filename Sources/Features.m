@@ -53,13 +53,13 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
         features = @[
             // ===== App Fixes (enablers for sideloaded installs) =====
             [UNKNWFeature toggle:kUNKNWIntegrityKey category:cFixes section:@""
-                           title:@"Integrity bypass"
-                          detail:@"Block device attestation so a re-signed install stops crashing (loaded at launch)"
+                           title:@"Stability guard"
+                          detail:@"Stop the sideloaded app crashing at launch (nil-string guard, loaded at launch)"
                        defaultOn:YES init:UNKNWInitIntegrityBypass],
             [UNKNWFeature toggle:kUNKNWKeychainFixKey category:cFixes section:@""
                            title:@"Fix login persistence"
                           detail:@"Keep your session across relaunches on a re-signed install"
-                       defaultOn:NO init:UNKNWInstallKeychainFix],
+                       defaultOn:YES init:UNKNWInstallKeychainFix],
             [UNKNWFeature toggle:kUNKNWBetaBypassKey category:cFixes section:@""
                            title:@"Bypass beta update gate"
                           detail:@"Skip the \"update Instagram Beta\" screen"
