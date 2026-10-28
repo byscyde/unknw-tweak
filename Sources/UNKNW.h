@@ -96,6 +96,7 @@ void     UNKNWPrefSetString(NSString *key, NSString *value);
 // Each is defined in its feature file under Sources/Features and runs its own
 // %init(group). Registered in Features.m. NULL in the registry = config-only
 // value with no hooks.
+extern void UNKNWInstallCrashLogger(void);
 extern void UNKNWInstallKeychainFix(void);
 extern void UNKNWInitBetaBypass(void);
 extern void UNKNWInitHideAds(void);

@@ -64,6 +64,11 @@
 
 %ctor {
     @autoreleasepool {
+        // Arm crash capture first of all, so an uncaught exception / fatal
+        // signal (even one in Instagram's own code) is recorded to the UNKNW
+        // log and visible in the Diagnostics screen.
+        UNKNWInstallCrashLogger();
+
         // Install the ungrouped UIWindow hook unconditionally so the settings
         // panel is always reachable.
         %init;
