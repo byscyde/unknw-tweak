@@ -13,11 +13,25 @@ sideloader) and install — there is no manual tweak step on their side.
 
 ## One-time setup (build machine — this Linux box or any Linux/macOS)
 
-1. **theos** with an iOS SDK + toolchain. On this environment that is already
-   installed at `/home/user/theos` (non-Swift iOS toolchain + iPhoneOS SDK).
+1. **theos** with an iOS SDK + toolchain whose `bin/` has `clang`, `ldid`,
+   `otool`, `install_name_tool`, `lipo`. On this environment it is installed at
+   `/home/user/theos` (non-Swift iOS toolchain + iPhoneOS 16.5 SDK).
    Elsewhere: https://theos.dev/docs/installation
-2. **Azule** (the injector) is cloned automatically on first run to `~/Azule`,
-   or set `AZULE_DIR`.
+2. **Azule** cloned to `~/Azule` (`git clone https://github.com/Al4ise/Azule`),
+   or set `AZULE_DIR`. Used only to add the dylib load command + rpath.
+3. **libplist** runtime (Azule's plist tool needs `libplist-2.0.so.4`):
+   `sudo apt-get install -y libplist-2.0-4`.
+
+> **Substrate:** the injected tweak needs only `MSHookMessageEx`. Rather than
+> download a full Substrate/ElleKit, the script compiles the tiny shim in
+> `substrate/CydiaSubstrate.m` and bundles it as `CydiaSubstrate.framework`.
+> That keeps the build self-contained and offline-friendly.
+
+## Input IPA must be decrypted
+
+The script injects into the app binary, so the Instagram `.ipa` must be a
+**decrypted** dump (`cryptid 0`), not a straight App Store download. Check with
+`otool -l Instagram | grep -A4 LC_ENCRYPTION_INFO`.
 
 ## Build the injected IPA
 

@@ -6,6 +6,9 @@ packages/
 *.ipa
 *.dylib
 
+# compiled CydiaSubstrate shim (source is substrate/CydiaSubstrate.m)
+substrate/CydiaSubstrate
+
 # macOS / editor noise
 .DS_Store
 *.swp
