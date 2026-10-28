@@ -12,33 +12,59 @@
 
 #import "../UNKNW.h"
 
-#define kUNKNWNagClassName @"IGCoreRootTestFlightNagPlugin.TestFlightUpdateNudgeViewController"
+// The gate is the Swift class
+// IGCoreRootTestFlightNagPlugin.TestFlightUpdateNudgeViewController. We match by
+// a substring ("TestFlightUpdateNudge") so a namespace/suffix rename still hits.
+static BOOL UNKNWIsNag(UIViewController *vc) {
+    if (!vc) return NO;
+    NSString *name = NSStringFromClass([vc class]);
+    if ([name containsString:@"TestFlightUpdateNudge"] ||
+        [name containsString:@"TestFlightNag"]) return YES;
+    // A container (nav/bottom-sheet) that wraps the nag counts too.
+    for (UIViewController *child in vc.childViewControllers) {
+        NSString *cn = NSStringFromClass([child class]);
+        if ([cn containsString:@"TestFlightUpdateNudge"] || [cn containsString:@"TestFlightNag"]) return YES;
+    }
+    return NO;
+}
+
+static void UNKNWKillNag(UIViewController *target) {
+    if (!target) return;
+    UNKNWLog(@"beta bypass: killing update nag (%@)", NSStringFromClass([target class]));
+    if (target.presentingViewController) {
+        [target.presentingViewController dismissViewControllerAnimated:NO completion:nil];
+    } else if (target.navigationController.viewControllers.count > 1) {
+        [target.navigationController popViewControllerAnimated:NO];
+    } else {
+        UIWindow *w = target.view.window;
+        [target.view removeFromSuperview];
+        [target willMoveToParentViewController:nil];
+        [target removeFromParentViewController];
+        // If it lives on its own overlay window, drop that window too.
+        if (w && w != w.windowScene.keyWindow) { w.hidden = YES; }
+    }
+}
 
 %group UNKNWBetaBypass
 
 %hook UIViewController
 
+// Primary: never present the nag in the first place.
+- (void)presentViewController:(UIViewController *)vc animated:(BOOL)flag completion:(void (^)(void))completion {
+    if (UNKNWIsNag(vc)) {
+        UNKNWLog(@"beta bypass: blocked presentation of update nag");
+        if (completion) completion();
+        return;
+    }
+    %orig;
+}
+
+// Backstop: if it appeared anyway (added as a child/overlay), remove it.
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
-    if (![NSStringFromClass([self class]) isEqualToString:kUNKNWNagClassName]) return;
-
-    UNKNWLog(@"beta bypass: dismissing update nag");
+    if (!UNKNWIsNag(self)) return;
     __weak UIViewController *vc = self;
-    // Dismiss on the next runloop so we never mutate the view-controller
-    // hierarchy from inside the appearance callback.
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIViewController *target = vc;
-        if (!target) return;
-        if (target.presentingViewController) {
-            [target.presentingViewController dismissViewControllerAnimated:NO completion:nil];
-        } else if (target.navigationController.viewControllers.count > 1) {
-            [target.navigationController popViewControllerAnimated:NO];
-        } else {
-            [target.view removeFromSuperview];
-            [target willMoveToParentViewController:nil];
-            [target removeFromParentViewController];
-        }
-    });
+    dispatch_async(dispatch_get_main_queue(), ^{ UNKNWKillNag(vc); });
 }
 
 %end

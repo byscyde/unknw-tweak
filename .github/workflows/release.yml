@@ -111,7 +111,7 @@ jobs:
       - name: Build + inject
         run: |
           chmod +x package-ipa.sh
-          ./package-ipa.sh ipa/clean.ipa packages/UNKNW-Instagram.ipa
+          ./package-ipa.sh ipa/clean.ipa packages/UNKNW-Gram.ipa
 
       - name: Publish release
         uses: softprops/action-gh-release@v2.0.8
@@ -120,6 +120,6 @@ jobs:
           name: UNKNW ${{ github.event.inputs.tag || 'latest' }}
           body: |
             UNKNW injected into Instagram (arm64).
-            Import `UNKNW-Instagram.ipa` into Feather (or another sideloader) and install.
-            Two-finger long-press inside Instagram opens the UNKNW panel.
-          files: packages/UNKNW-Instagram.ipa
+            Import `UNKNW-Gram.ipa` into Feather (or another sideloader) and install.
+            Two-finger long-press (or long-press the Home tab) opens the UNKNW panel.
+          files: packages/UNKNW-Gram.ipa
