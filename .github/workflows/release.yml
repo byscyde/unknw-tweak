@@ -39,7 +39,7 @@ jobs:
 
       - name: Cache theos toolchain + SDK
         id: cache-theos
-        uses: actions/cache@v4.1.2
+        uses: actions/cache@v4.2.3
         with:
           path: theos
           key: theos-ios16.5-${{ runner.os }}-v1
