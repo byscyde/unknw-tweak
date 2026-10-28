@@ -81,16 +81,15 @@
             return;
         }
 
-        // Gate: everything stays locked until a license key is activated. The
-        // settings panel is still reachable so the user can enter their key.
-        if (!UNKNWLicense.shared.isActivated) {
-            UNKNWLog(@"locked — activate a license to unlock features");
-            return;
-        }
-
+        // "App Fixes" are enablers that just make the sideloaded app usable
+        // (keychain/login, beta gate) — they load regardless of activation.
+        // Every other (premium) feature stays locked until a license is active.
+        BOOL activated = UNKNWLicense.shared.isActivated;
         NSUInteger loaded = 0;
         for (UNKNWFeature *feature in UNKNWAllFeatures()) {
             if ([feature.key isEqualToString:kUNKNWDebugLoggingKey]) continue; // already loaded
+            BOOL isEnabler = [feature.category isEqualToString:@"App Fixes"];
+            if (!isEnabler && !activated) continue; // premium gated behind license
             if (feature.initializer && UNKNWPrefBool(feature.key, feature.defaultBool)) {
                 feature.initializer();
                 loaded++;
