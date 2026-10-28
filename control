@@ -1,0 +1,9 @@
+Package: dev.scyde.unknw
+Name: UNKNW
+Version: 0.1.0
+Architecture: iphoneos-arm
+Description: An original enhancement tweak for Instagram, with an in-app settings panel.
+Maintainer: SCYDE <https://scyde.dev>
+Author: SCYDE <https://scyde.dev>
+Section: Tweaks
+Depends: mobilesubstrate

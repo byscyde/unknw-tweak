@@ -1,0 +1,11 @@
+# theos build output
+.theos/
+obj/
+packages/
+*.deb
+*.ipa
+*.dylib
+
+# macOS / editor noise
+.DS_Store
+*.swp

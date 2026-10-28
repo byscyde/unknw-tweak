@@ -1,0 +1,29 @@
+// TEMPLATE — copy this file to Sources/Features/MyFeature.x to add a feature.
+// The `.example` extension keeps it out of the build (the Makefile only
+// compiles Features/*.x). Steps:
+//
+//   1. Copy to Sources/Features/MyFeature.x and rename the symbols below.
+//   2. In UNKNW.h add:  #define kUNKNWMyFeatureKey @"UNKNW.myFeature"
+//                       extern void UNKNWInitMyFeature(void);
+//   3. In Features.m add one [UNKNWFeature withKey:... initializer:UNKNWInitMyFeature] entry.
+//
+// Hook real Instagram classes by name — you don't need its private headers.
+// Use the Developer Logging feature to discover class names at runtime, and
+// declare any method you call on `self` in an @interface or via performSelector.
+
+#import "../UNKNW.h"
+
+%group UNKNWMyFeature
+
+// %hook SomeInstagramClass
+// - (void)someMethod {
+//     %orig;
+//     UNKNWLog(@"MyFeature ran");
+// }
+// %end
+
+%end
+
+void UNKNWInitMyFeature(void) {
+    %init(UNKNWMyFeature);
+}
