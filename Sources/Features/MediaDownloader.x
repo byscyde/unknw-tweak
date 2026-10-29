@@ -57,87 +57,92 @@ static void UNKNWToast(NSString *msg) {
     });
 }
 
-#pragma mark - bounded model-graph search for a media URL
+#pragma mark - safe model-graph search for a media URL
 
 typedef struct { NSMutableArray *videos; NSMutableArray *images; /* @[url,width] */ int budget; } UNKNWScanCtx;
 
-static double UNKNWCallDouble(id obj, SEL sel) {
-    return ((double (*)(id, SEL))objc_msgSend)(obj, sel);
+// Keys that may hold a media/model/user object or a collection of them. We only
+// ever read these through -valueForKey: (which calls the real getter, so Swift
+// lazy-stored properties initialise safely) — never raw object_getIvar, which
+// would hand back uninitialised lazy-storage pointers and crash.
+static NSArray<NSString *> *UNKNWTraverseKeys(void) {
+    static NSArray *keys; static dispatch_once_t once;
+    dispatch_once(&once, ^{ keys = @[
+        @"mediaInfo", @"mediaPassthrough", @"media", @"video", @"photo", @"image",
+        @"items", @"item", @"currentItem", @"currentStoryItem", @"storyItem",
+        @"model", @"viewModel", @"post", @"feedItem", @"contentMedia", @"displayMedia",
+        @"igMedia", @"reelItem", @"clipsItem", @"user", @"carouselMedia", @"firstItem" ]; });
+    return keys;
 }
-static id UNKNWCallId(id obj, SEL sel) {
-    return ((id (*)(id, SEL))objc_msgSend)(obj, sel);
+
+static NSURL *UNKNWCallURL(id obj, NSString *sel) {
+    @try {
+        SEL s = NSSelectorFromString(sel);
+        if (![obj respondsToSelector:s]) return nil;
+        id r = ((id (*)(id, SEL))objc_msgSend)(obj, s);
+        return [r isKindOfClass:NSURL.class] ? r : nil;
+    } @catch (__unused id e) { return nil; }
 }
 
 static void UNKNWScan(id obj, UNKNWScanCtx *ctx, NSMutableSet *seen, int depth) {
-    if (!obj || depth > 6 || ctx->budget <= 0) return;
+    if (!obj || depth > 5 || ctx->budget <= 0) return;
     if ([obj isKindOfClass:NSString.class] || [obj isKindOfClass:NSNumber.class] ||
-        [obj isKindOfClass:NSData.class]   || [obj isKindOfClass:NSDate.class]) return;
+        [obj isKindOfClass:NSData.class]   || [obj isKindOfClass:NSDate.class]   ||
+        [obj isKindOfClass:NSURL.class]) return;
     NSValue *k = [NSValue valueWithNonretainedObject:obj];
     if ([seen containsObject:k]) return;
     [seen addObject:k];
     ctx->budget--;
 
-    NSString *cn = NSStringFromClass(object_getClass(obj)) ?: @"";
-
     // Video variant URLs.
     @try {
         SEL s = NSSelectorFromString(@"allVideoURLs");
         if ([obj respondsToSelector:s]) {
-            id set = UNKNWCallId(obj, s);
-            for (id u in set) if ([u isKindOfClass:NSURL.class]) [ctx->videos addObject:u];
+            id set = ((id (*)(id, SEL))objc_msgSend)(obj, s);
+            if ([set respondsToSelector:@selector(objectEnumerator)])
+                for (id u in set) if ([u isKindOfClass:NSURL.class]) [ctx->videos addObject:u];
         }
     } @catch (__unused id e) {}
 
-    // HD profile picture.
-    @try {
-        SEL s = NSSelectorFromString(@"HDProfilePicURL");
-        if ([obj respondsToSelector:s]) {
-            NSURL *u = UNKNWCallId(obj, s);
-            if ([u isKindOfClass:NSURL.class]) [ctx->images addObject:@[u, @(1.0e9)]];
-        }
-    } @catch (__unused id e) {}
+    // HD profile picture / cover image.
+    NSURL *hd = UNKNWCallURL(obj, @"HDProfilePicURL"); if (hd) [ctx->images addObject:@[hd, @(1.0e9)]];
+    NSURL *cover = UNKNWCallURL(obj, @"coverImageURL"); if (cover) [ctx->images addObject:@[cover, @(5.0e8)]];
 
-    // An image-version object exposes url (+ width).
-    if ([cn containsString:@"ImageURL"] || [cn containsString:@"ImageSpecifier"]) {
+    // Image-version arrays -> IGImageURL (url + width).
+    for (NSString *key in @[@"_originalImageVersions", @"originalImageVersions", @"imageVersions", @"candidates"]) {
         @try {
-            SEL su = NSSelectorFromString(@"url");
-            NSURL *u = [obj respondsToSelector:su] ? UNKNWCallId(obj, su) : nil;
-            double w = 0; SEL sw = NSSelectorFromString(@"width");
-            if ([obj respondsToSelector:sw]) w = UNKNWCallDouble(obj, sw);
-            if ([u isKindOfClass:NSURL.class]) [ctx->images addObject:@[u, @(w)]];
+            id arr = [obj valueForKey:key];
+            if ([arr respondsToSelector:@selector(objectEnumerator)]) {
+                for (id iv in arr) {
+                    NSURL *u = nil; double w = 0;
+                    @try { id uu = [iv valueForKey:@"url"]; if ([uu isKindOfClass:NSURL.class]) u = uu;
+                           id ww = [iv valueForKey:@"width"]; if ([ww respondsToSelector:@selector(doubleValue)]) w = [ww doubleValue]; }
+                    @catch (__unused id e) {}
+                    if (u) [ctx->images addObject:@[u, @(w)]];
+                }
+            }
         } @catch (__unused id e) {}
     }
 
-    // Collections: descend into elements (skip view objects).
+    // Collections.
     if ([obj isKindOfClass:NSArray.class] || [obj isKindOfClass:NSSet.class] || [obj isKindOfClass:NSOrderedSet.class]) {
         for (id e in obj) if (![e isKindOfClass:UIResponder.class]) UNKNWScan(e, ctx, seen, depth + 1);
         return;
     }
-    if ([obj isKindOfClass:NSDictionary.class]) {
-        for (id e in ((NSDictionary *)obj).allValues) if (![e isKindOfClass:UIResponder.class]) UNKNWScan(e, ctx, seen, depth + 1);
-        return;
-    }
 
-    // Walk object-typed ivars (including superclasses), skipping the view tree.
-    Class c = object_getClass(obj); int up = 0;
-    while (c && c != NSObject.class && up < 5 && ctx->budget > 0) {
-        unsigned n = 0; Ivar *ivars = class_copyIvarList(c, &n);
-        for (unsigned i = 0; i < n && ctx->budget > 0; i++) {
-            const char *t = ivar_getTypeEncoding(ivars[i]);
-            if (!t || t[0] != '@') continue;
-            @try {
-                id v = object_getIvar(obj, ivars[i]);
-                if (v && ![v isKindOfClass:UIResponder.class]) UNKNWScan(v, ctx, seen, depth + 1);
-            } @catch (__unused id e) {}
-        }
-        free(ivars);
-        c = class_getSuperclass(c); up++;
+    // Follow only the curated keys, via safe KVC getters.
+    for (NSString *key in UNKNWTraverseKeys()) {
+        if (ctx->budget <= 0) break;
+        @try {
+            id v = [obj valueForKey:key];
+            if (v && ![v isKindOfClass:UIResponder.class]) UNKNWScan(v, ctx, seen, depth + 1);
+        } @catch (__unused id e) {}
     }
 }
 
 // Resolve the best downloadable URL reachable from `root` (a cell / media view).
 static NSURL *UNKNWResolveMediaURL(id root) {
-    UNKNWScanCtx ctx; ctx.videos = [NSMutableArray array]; ctx.images = [NSMutableArray array]; ctx.budget = 1200;
+    UNKNWScanCtx ctx; ctx.videos = [NSMutableArray array]; ctx.images = [NSMutableArray array]; ctx.budget = 400;
     UNKNWScan(root, &ctx, [NSMutableSet set], 0);
 
     // Prefer a video; use the longest URL string as a cheap "best variant".
