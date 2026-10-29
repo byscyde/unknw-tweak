@@ -17,14 +17,32 @@
 
 #import "../UNKNW.h"
 
+// Append a diagnostic line to the UNKNW log shown in the Diagnostics screen.
+static void UNKNWDiag(NSString *line) {
+    NSURL *as = [NSFileManager.defaultManager URLForDirectory:NSApplicationSupportDirectory
+                                                     inDomain:NSUserDomainMask appropriateForURL:nil create:YES error:nil];
+    NSURL *dir = [as URLByAppendingPathComponent:@"UNKNW" isDirectory:YES];
+    [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *path = [[dir URLByAppendingPathComponent:@"classes.log"] path];
+    NSString *entry = [line stringByAppendingString:@"\n"];
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!fh) { [entry writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]; return; }
+    @try { [fh seekToEndOfFile]; [fh writeData:[entry dataUsingEncoding:NSUTF8StringEncoding]]; }
+    @catch (__unused NSException *e) {} @finally { [fh closeFile]; }
+}
+
 %group UNKNWStabilityGuard
 
 %hook NSString
 
 - (NSRange)rangeOfString:(NSString *)aString options:(NSStringCompareOptions)mask range:(NSRange)searchRange locale:(NSLocale *)locale {
     if (!aString) {
-        static dispatch_once_t once;
-        dispatch_once(&once, ^{ UNKNWLog(@"stability guard: swallowed rangeOfString:nil (crash averted)"); });
+        // Log the first few contexts so we can see WHAT Instagram is comparing
+        // against nil (the value that is populated on an App Store build but nil
+        // on a re-signed install) — that is the real root to supply.
+        static int n = 0;
+        if (n < 12) { n++; NSString *me = (NSString *)self;
+            UNKNWDiag([NSString stringWithFormat:@"[nil-guard] receiver=\"%@\"", me.length > 120 ? [me substringToIndex:120] : me]); }
         return NSMakeRange(NSNotFound, 0);
     }
     return %orig;
@@ -34,7 +52,25 @@
 
 %end
 
+// Capture the exact text of error popups Instagram shows (the "Error Domain"
+// alert), which the user cannot read fully on-device.
+%group UNKNWErrorDiag
+
+%hook UIAlertController
+- (void)setTitle:(NSString *)title {
+    if (title.length) UNKNWDiag([NSString stringWithFormat:@"[alert.title] %@", title]);
+    %orig;
+}
+- (void)setMessage:(NSString *)message {
+    if (message.length) UNKNWDiag([NSString stringWithFormat:@"[alert.message] %@", message]);
+    %orig;
+}
+%end
+
+%end
+
 void UNKNWInitIntegrityBypass(void) {
     %init(UNKNWStabilityGuard);
+    if (UNKNWPrefBool(kUNKNWDebugLoggingKey, NO)) %init(UNKNWErrorDiag);
     UNKNWLog(@"stability guard installed");
 }
