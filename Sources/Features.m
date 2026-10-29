@@ -68,7 +68,7 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
             // ===== Feed =====
             [UNKNWFeature toggle:kUNKNWHideAdsKey category:cFeed section:@"Posts"
                            title:@"Hide ads" detail:@"Remove sponsored posts from the feed"
-                       defaultOn:NO init:UNKNWInitHideAds],
+                       defaultOn:YES init:UNKNWInitHideAds],
             [UNKNWFeature toggle:kUNKNWFeedDisableAutoplayKey category:cFeed section:@"Posts"
                            title:@"Disable video autoplay" detail:@"Feed videos play only when tapped"
                        defaultOn:NO init:UNKNWInitFeedDisableAutoplay],

@@ -11,9 +11,56 @@
 //     and hide them when kUNKNWHideCommentsPreviewKey is ON.
 
 #import "../UNKNW.h"
+#import <objc/runtime.h>
+#import <objc/message.h>
+
+// Interop: the feed/reels list data sources vend their visible objects through
+// -objectsForListAdapter:. We return %orig with the sponsored items removed.
+@interface IGMainFeedListAdapterDataSource : NSObject @end
+@interface IGSundialFeedDataSource : NSObject @end
+@interface IGVideoFeedViewController : UIViewController @end
+@interface IGChainingFeedViewController : UIViewController @end
+
+static BOOL UNKNWIsAdObject(id obj) {
+    if (!obj) return NO;
+    NSString *cn = NSStringFromClass(object_getClass(obj)) ?: @"";
+    if ([cn isEqualToString:@"IGAdItem"]) return YES;
+    if ([cn containsString:@"SundialAds"] || [cn containsString:@"AdsVideoCell"] ||
+        [cn containsString:@"MultiAdsCell"] || [cn containsString:@"AdItem"]) return YES;
+    @try {
+        SEL sp = NSSelectorFromString(@"isSponsored");
+        if ([obj respondsToSelector:sp] && ((BOOL (*)(id, SEL))objc_msgSend)(obj, sp)) return YES;
+        SEL sa = NSSelectorFromString(@"isSponsoredApp");
+        if ([obj respondsToSelector:sa] && ((BOOL (*)(id, SEL))objc_msgSend)(obj, sa)) return YES;
+    } @catch (__unused id e) {}
+    return NO;
+}
+
+static NSArray *UNKNWFilterAds(NSArray *items) {
+    if (!UNKNWPrefBool(kUNKNWHideAdsKey, NO) || ![items isKindOfClass:NSArray.class]) return items;
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:items.count];
+    for (id o in items) if (!UNKNWIsAdObject(o)) [out addObject:o];
+    return out;
+}
 
 %group UNKNWHideAds
-// TODO: drop/collapse sponsored feed items.
+
+%hook IGMainFeedListAdapterDataSource
+- (NSArray *)objectsForListAdapter:(id)adapter { return UNKNWFilterAds(%orig); }
+%end
+
+%hook IGSundialFeedDataSource
+- (NSArray *)objectsForListAdapter:(id)adapter { return UNKNWFilterAds(%orig); }
+%end
+
+%hook IGVideoFeedViewController
+- (NSArray *)objectsForListAdapter:(id)adapter { return UNKNWFilterAds(%orig); }
+%end
+
+%hook IGChainingFeedViewController
+- (NSArray *)objectsForListAdapter:(id)adapter { return UNKNWFilterAds(%orig); }
+%end
+
 %end
 
 %group UNKNWFeedDisableAutoplay
