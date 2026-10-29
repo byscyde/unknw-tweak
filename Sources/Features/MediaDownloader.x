@@ -10,6 +10,7 @@
 #import "../UNKNW.h"
 #import "../Core/UNKNWVault.h"
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import <AVFoundation/AVFoundation.h>
 
 @interface IGSundialViewerVideoCell : UIView
