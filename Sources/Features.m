@@ -74,7 +74,7 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
                        defaultOn:NO init:UNKNWInitFeedDisableAutoplay],
             [UNKNWFeature toggle:kUNKNWConfirmLikeKey category:cFeed section:@"Posts"
                            title:@"Confirm likes" detail:@"Ask before liking to avoid accidental taps"
-                       defaultOn:NO init:UNKNWInitConfirmLike],
+                       defaultOn:YES init:UNKNWInitConfirmLike],
             [UNKNWFeature toggle:kUNKNWDetailedDatesKey category:cFeed section:@"Posts"
                            title:@"Detailed dates" detail:@"Show full timestamps on posts and stories"
                        defaultOn:NO init:UNKNWInitDetailedDates],
@@ -136,7 +136,7 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
                        defaultOn:NO init:UNKNWInitProfileAnalyzer],
             [UNKNWFeature toggle:kUNKNWConfirmFollowKey category:cProfile section:@""
                            title:@"Confirm follows" detail:@"Ask before following/unfollowing"
-                       defaultOn:NO init:UNKNWInitConfirmFollow],
+                       defaultOn:YES init:UNKNWInitConfirmFollow],
 
             // ===== Download Manager =====
             [UNKNWFeature toggle:kUNKNWMediaDownloaderKey category:cDownload section:@""

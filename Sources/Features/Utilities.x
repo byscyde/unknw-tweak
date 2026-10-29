@@ -42,12 +42,69 @@ static void UNKNWCopyToast(void) {
     });
 }
 
+// Interop: the action methods we gate behind a confirmation.
+@interface IGFollowController : NSObject @end
+@interface IGUFIInteractionCountsView : UIView @end
+@interface IGSundialViewerVerticalUFI : UIView @end
+@interface IGFeedPhotoView : UIView @end
+
+static UIViewController *UNKNWTopVC(void) {
+    UIWindow *win = nil;
+    for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
+        if ([s isKindOfClass:UIWindowScene.class])
+            for (UIWindow *w in ((UIWindowScene *)s).windows) if (w.isKeyWindow) { win = w; break; }
+    UIViewController *vc = win.rootViewController;
+    while (vc.presentedViewController) vc = vc.presentedViewController;
+    return vc;
+}
+
+static void UNKNWConfirm(NSString *title, void (^onYes)(void)) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *top = UNKNWTopVC();
+        if (!top) { if (onYes) onYes(); return; }
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:title message:nil
+                                                          preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+        [a addAction:[UIAlertAction actionWithTitle:@"Yes" style:UIAlertActionStyleDefault
+                                            handler:^(UIAlertAction *_){ if (onYes) onYes(); }]];
+        [top presentViewController:a animated:YES completion:nil];
+    });
+}
+
 %group UNKNWConfirmLike
-// TODO: confirm before %orig of the like action when kUNKNWConfirmLikeKey ON.
+
+%hook IGUFIInteractionCountsView           // feed like button
+- (void)_onLikeButtonPressed:(id)arg1 {
+    if (!UNKNWPrefBool(kUNKNWConfirmLikeKey, NO)) { %orig; return; }
+    UNKNWConfirm(@"Like this post?", ^{ %orig; });
+}
+%end
+
+%hook IGSundialViewerVerticalUFI           // reels like button
+- (void)_didTapLikeButton:(id)arg1 {
+    if (!UNKNWPrefBool(kUNKNWConfirmLikeKey, NO)) { %orig; return; }
+    UNKNWConfirm(@"Like this reel?", ^{ %orig; });
+}
+%end
+
+%hook IGFeedPhotoView                        // double-tap to like
+- (void)_onDoubleTap:(id)arg1 {
+    if (!UNKNWPrefBool(kUNKNWConfirmLikeKey, NO)) { %orig; return; }
+    UNKNWConfirm(@"Like this post?", ^{ %orig; });
+}
+%end
+
 %end
 
 %group UNKNWConfirmFollow
-// TODO: confirm before %orig of the follow action when kUNKNWConfirmFollowKey ON.
+
+%hook IGFollowController
+- (void)_didPressFollowButton {
+    if (!UNKNWPrefBool(kUNKNWConfirmFollowKey, NO)) { %orig; return; }
+    UNKNWConfirm(@"Change follow status?", ^{ %orig; });
+}
+%end
+
 %end
 
 %group UNKNWCopyText
