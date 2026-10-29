@@ -118,7 +118,7 @@
             // NOTE: license gating is disabled during the feature-port phase so
             // every feature can be built and tested. Re-enable once the license
             // server is live by restoring:  if (!isEnabler && !activated) continue;
-            (void)activated;
+            (void)activated; (void)isEnabler;
             if (feature.initializer && UNKNWPrefBool(feature.key, feature.defaultBool)) {
                 feature.initializer();
                 loaded++;
