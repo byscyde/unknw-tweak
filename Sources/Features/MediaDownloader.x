@@ -120,19 +120,36 @@ static void UNKNWAddLongPress(UIView *v, SEL action) {
 
 %group UNKNWMediaDownloader
 
-// Track the URL of whatever is currently set to play.
+static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
+    if (![u isKindOfClass:NSURL.class] || ![u.scheme hasPrefix:@"http"]) return;
+    gUNKNWLastVideoURL = u;
+    static dispatch_once_t o; dispatch_once(&o, ^{ UNKNWDiagLog([NSString stringWithFormat:@"[dl] video via %@", src]); });
+}
+
+// Capture the URL of any video asset Instagram loads, regardless of which
+// player it renders with.
+%hook AVURLAsset
+- (instancetype)initWithURL:(NSURL *)URL options:(NSDictionary *)options {
+    self = %orig;
+    @try { UNKNWNoteVideoURL(URL, @"AVURLAsset"); } @catch (__unused id e) {}
+    return self;
+}
+%end
+
+%hook AVPlayerItem
+- (instancetype)initWithURL:(NSURL *)URL {
+    self = %orig;
+    @try { UNKNWNoteVideoURL(URL, @"AVPlayerItem"); } @catch (__unused id e) {}
+    return self;
+}
+%end
+
 %hook AVPlayer
 - (void)replaceCurrentItemWithPlayerItem:(AVPlayerItem *)item {
     %orig;
     @try {
         AVAsset *asset = item.asset;
-        if ([asset isKindOfClass:AVURLAsset.class]) {
-            NSURL *u = ((AVURLAsset *)asset).URL;
-            if ([u.scheme hasPrefix:@"http"]) {
-                gUNKNWLastVideoURL = u;
-                static dispatch_once_t o; dispatch_once(&o, ^{ UNKNWDiagLog(@"[dl] AVPlayer is used for playback"); });
-            }
-        }
+        if ([asset isKindOfClass:AVURLAsset.class]) UNKNWNoteVideoURL(((AVURLAsset *)asset).URL, @"AVPlayer");
     } @catch (__unused id e) {}
 }
 %end
