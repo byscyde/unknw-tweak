@@ -28,7 +28,7 @@
 - (void)fullscreenSectionController:(id)arg1 didMarkItemAsSeen:(id)arg2 {
     // When hiding is on, simply don't propagate the "seen" event, so no receipt
     // is reported for the story you just viewed.
-    if (UNKNWPrefBool(kUNKNWHideStorySeenKey, NO)) return;
+    if (UNKNWPrefBool(kUNKNWHideStorySeenKey, YES)) return;
     %orig;
 }
 

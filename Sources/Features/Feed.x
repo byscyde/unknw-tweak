@@ -47,7 +47,7 @@ static NSArray *UNKNWFilterAds(NSArray *items) {
         [seen addObject:c];
         UNKNWDiagLog([NSString stringWithFormat:@"[ads] feed item class: %@", c]);
     }
-    if (!UNKNWPrefBool(kUNKNWHideAdsKey, NO)) return items;
+    if (!UNKNWPrefBool(kUNKNWHideAdsKey, YES)) return items;
     NSMutableArray *out = [NSMutableArray arrayWithCapacity:items.count];
     for (id it in items) if (!UNKNWIsAdObject(it)) [out addObject:it];
     return out;
