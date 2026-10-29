@@ -115,7 +115,10 @@
             if ([feature.key isEqualToString:kUNKNWDebugLoggingKey]) continue; // already loaded
             if ([feature.key isEqualToString:kUNKNWIntegrityKey]) continue;    // loaded early above
             BOOL isEnabler = [feature.category isEqualToString:@"App Fixes"];
-            if (!isEnabler && !activated) continue; // premium gated behind license
+            // NOTE: license gating is disabled during the feature-port phase so
+            // every feature can be built and tested. Re-enable once the license
+            // server is live by restoring:  if (!isEnabler && !activated) continue;
+            (void)activated;
             if (feature.initializer && UNKNWPrefBool(feature.key, feature.defaultBool)) {
                 feature.initializer();
                 loaded++;

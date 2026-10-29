@@ -140,8 +140,8 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
 
             // ===== Download Manager =====
             [UNKNWFeature toggle:kUNKNWMediaDownloaderKey category:cDownload section:@""
-                           title:@"Media Downloader" detail:@"Download posts, reels, stories and post audio"
-                       defaultOn:NO init:UNKNWInitMediaDownloader],
+                           title:@"Media Downloader" detail:@"Long-press a reel or profile picture to save it (more surfaces soon)"
+                       defaultOn:YES init:UNKNWInitMediaDownloader],
             [UNKNWFeature toggle:kUNKNWMediaDMKey category:cDownload section:@""
                            title:@"Allow DM media" detail:@"Include media received in direct messages"
                        defaultOn:NO init:NULL],
