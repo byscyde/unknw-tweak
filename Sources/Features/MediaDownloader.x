@@ -73,63 +73,6 @@ static NSURL *UNKNWVideoURLInView(UIView *v, int depth) {
     return nil;
 }
 
-// Try known Instagram video-URL accessors on an object via safe KVC/selectors.
-static NSURL *UNKNWURLFromObj(id obj) {
-    if (!obj) return nil;
-    for (NSString *k in @[@"videoURL", @"url", @"mediaURL", @"playableURL",
-                          @"progressiveDownloadURL", @"progressiveDownloadUrl",
-                          @"currentVideoURL", @"assetURL", @"contentURL"]) {
-        @try {
-            id v = [obj valueForKey:k];
-            if ([v isKindOfClass:NSURL.class]) return v;
-            if ([v isKindOfClass:NSString.class] && [(NSString *)v hasPrefix:@"http"]) return [NSURL URLWithString:v];
-        } @catch (__unused id e) {}
-    }
-    @try { id a = [obj valueForKey:@"asset"]; if ([a isKindOfClass:AVURLAsset.class]) return ((AVURLAsset *)a).URL; } @catch (__unused id e) {}
-    @try {
-        SEL s = NSSelectorFromString(@"allVideoURLs");
-        if ([obj respondsToSelector:s]) {
-            id set = ((id (*)(id, SEL))objc_msgSend)(obj, s);
-            for (id uu in set) if ([uu isKindOfClass:NSURL.class]) return uu;
-        }
-    } @catch (__unused id e) {}
-    return nil;
-}
-
-static UIView *UNKNWFindViewContaining(UIView *root, NSString *needle, int depth) {
-    if (!root || depth > 8) return nil;
-    if ([NSStringFromClass(object_getClass(root)) containsString:needle]) return root;
-    for (UIView *sv in root.subviews) { UIView *r = UNKNWFindViewContaining(sv, needle, depth + 1); if (r) return r; }
-    return nil;
-}
-
-// Reels use a custom Metal video view (IGSundialModernVideoPlaybackView); the
-// URL lives on it or its model, not an AVPlayerLayer.
-static NSURL *UNKNWReelVideoURL(UIView *cell) {
-    UIView *pv = UNKNWFindViewContaining(cell, @"VideoPlayback", 0) ?: UNKNWFindViewContaining(cell, @"ModernVideo", 0);
-    NSURL *u = UNKNWURLFromObj(pv);
-    if (u) return u;
-    for (NSString *k in @[@"media", @"model", @"viewModel", @"videoModel", @"playbackModel", @"video", @"item", @"mediaInfo", @"dataModel"]) {
-        @try { NSURL *r = UNKNWURLFromObj([pv valueForKey:k]); if (r) return r; } @catch (__unused id e) {}
-    }
-    for (NSString *k in @[@"mediaInfo", @"mediaPassthrough", @"media", @"viewModel", @"itemConfiguration"]) {
-        @try {
-            id m = [cell valueForKey:k];
-            NSURL *r = UNKNWURLFromObj(m); if (r) return r;
-            @try { NSURL *r2 = UNKNWURLFromObj([m valueForKey:@"video"]); if (r2) return r2; } @catch (__unused id e) {}
-        } @catch (__unused id e) {}
-    }
-    if (pv) { // diagnostic: real property names of the playback view
-        @try {
-            NSMutableString *s = [NSMutableString stringWithFormat:@"[dl] playback %@ ivars:", NSStringFromClass(object_getClass(pv))];
-            unsigned n = 0; Ivar *iv = class_copyIvarList(object_getClass(pv), &n);
-            for (unsigned i = 0; i < n && i < 50; i++) [s appendFormat:@" %s", ivar_getName(iv[i])];
-            free(iv); UNKNWDiagLog(s);
-        } @catch (__unused id e) {}
-    }
-    return nil;
-}
-
 #pragma mark - save helpers
 
 static void UNKNWSaveVideoURL(NSURL *url) {
@@ -219,7 +162,7 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 %new
 - (void)unknw_save:(UILongPressGestureRecognizer *)g {
     if (g.state != UIGestureRecognizerStateBegan) return;
-    NSURL *u = UNKNWReelVideoURL(self) ?: UNKNWVideoURLInView(self, 0) ?: gUNKNWLastVideoURL;
+    NSURL *u = UNKNWVideoURLInView(self, 0) ?: gUNKNWLastVideoURL;  // safe: AVPlayerLayer / last-played only
     UNKNWSaveVideoURL(u);
 }
 %end
