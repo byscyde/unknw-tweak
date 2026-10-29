@@ -16,6 +16,8 @@
 @end
 @interface IGProfilePictureImageView : UIImageView
 @end
+@interface IGFeedPhotoView : UIView
+@end
 
 static const void *kUNKNWDLInstalled = &kUNKNWDLInstalled;
 static NSURL *gUNKNWLastVideoURL = nil;  // most recently played video
@@ -193,11 +195,16 @@ static void UNKNWDumpTree(UIView *v, NSMutableString *s, int depth) {
         @try { id v = [self valueForKey:key]; if ([v isKindOfClass:NSURL.class]) { hd = v; break; } } @catch (__unused id e) {}
     }
     if (hd) { UNKNWSaveVideoURL(hd); return; }  // downloadURL handles images too
-    // Diagnostic: record what's available so we can resolve HD precisely.
-    UIImage *img = UNKNWLargestImage(self, 0);
-    UNKNWDiagLog([NSString stringWithFormat:@"[dp] img=%@ override=%@ ivars see log",
-                  img ? NSStringFromCGSize(img.size) : @"nil", hd ? @"set" : @"nil"]);
-    UNKNWSaveImage(img);
+    UNKNWSaveImage(UNKNWLargestImage(self, 0));
+}
+%end
+
+// Feed post photo — long-press to save the displayed image.
+%hook IGFeedPhotoView
+- (void)didMoveToWindow { %orig; UNKNWAddLongPress(self, @selector(unknw_save:)); }
+%new
+- (void)unknw_save:(UILongPressGestureRecognizer *)g {
+    if (g.state == UIGestureRecognizerStateBegan) UNKNWSaveImage(UNKNWLargestImage(self, 0));
 }
 %end
 
