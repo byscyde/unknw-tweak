@@ -15,10 +15,24 @@
 
 #import "../UNKNW.h"
 
+// Interop: the story viewer forwards "this item was seen" to its delegate, which
+// is what triggers the outbound seen receipt.
+@interface IGStoryViewerViewController_U : UIViewController
+- (void)fullscreenSectionController:(id)arg1 didMarkItemAsSeen:(id)arg2;
+@end
+
 %group UNKNWHideStorySeen
 
-// TODO: %hook the "mark story seen" reporter; skip %orig when
-//       UNKNWPrefBool(kUNKNWHideStorySeenKey, NO) is YES.
+%hook IGStoryViewerViewController
+
+- (void)fullscreenSectionController:(id)arg1 didMarkItemAsSeen:(id)arg2 {
+    // When hiding is on, simply don't propagate the "seen" event, so no receipt
+    // is reported for the story you just viewed.
+    if (UNKNWPrefBool(kUNKNWHideStorySeenKey, NO)) return;
+    %orig;
+}
+
+%end
 
 %end
 

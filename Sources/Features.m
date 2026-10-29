@@ -80,7 +80,7 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
                        defaultOn:NO init:UNKNWInitDetailedDates],
             [UNKNWFeature toggle:kUNKNWCopyTextKey category:cFeed section:@"Comments"
                            title:@"Copy text" detail:@"Long-press a comment or caption to copy it"
-                       defaultOn:NO init:UNKNWInitCopyText],
+                       defaultOn:YES init:UNKNWInitCopyText],
             [UNKNWFeature toggle:kUNKNWHideCommentsPreviewKey category:cFeed section:@"Comments"
                            title:@"Hide comments preview" detail:@"Remove the comment preview under posts"
                        defaultOn:NO init:UNKNWInitHideCommentsPreview],
@@ -105,7 +105,7 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
                        defaultOn:NO init:NULL],
             [UNKNWFeature toggle:kUNKNWHideStorySeenKey category:cStories section:@"Privacy"
                            title:@"Hide story seen" detail:@"View stories without sending a seen receipt"
-                       defaultOn:NO init:UNKNWInitHideStorySeen],
+                       defaultOn:YES init:UNKNWInitHideStorySeen],
 
             // ===== Messages =====
             [UNKNWFeature toggle:kUNKNWHideTypingKey category:cMsg section:@"Privacy"
