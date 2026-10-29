@@ -37,9 +37,19 @@ static BOOL UNKNWIsAdObject(id obj) {
 }
 
 static NSArray *UNKNWFilterAds(NSArray *items) {
-    if (!UNKNWPrefBool(kUNKNWHideAdsKey, NO) || ![items isKindOfClass:NSArray.class]) return items;
+    if (![items isKindOfClass:NSArray.class]) return items;
+    // Diagnostic: show what the feed actually vends (once per item-class set).
+    static NSMutableSet *seen; static dispatch_once_t o; dispatch_once(&o, ^{ seen = [NSMutableSet set]; });
+    NSCountedSet *cs = [NSCountedSet set];
+    for (id it in items) [cs addObject:NSStringFromClass(object_getClass(it)) ?: @"?"];
+    for (NSString *c in cs) {
+        if ([seen containsObject:c]) continue;
+        [seen addObject:c];
+        UNKNWDiagLog([NSString stringWithFormat:@"[ads] feed item class: %@", c]);
+    }
+    if (!UNKNWPrefBool(kUNKNWHideAdsKey, NO)) return items;
     NSMutableArray *out = [NSMutableArray arrayWithCapacity:items.count];
-    for (id o in items) if (!UNKNWIsAdObject(o)) [out addObject:o];
+    for (id it in items) if (!UNKNWIsAdObject(it)) [out addObject:it];
     return out;
 }
 

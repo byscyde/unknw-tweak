@@ -128,11 +128,26 @@ static void UNKNWAddLongPress(UIView *v, SEL action) {
         AVAsset *asset = item.asset;
         if ([asset isKindOfClass:AVURLAsset.class]) {
             NSURL *u = ((AVURLAsset *)asset).URL;
-            if ([u.scheme hasPrefix:@"http"]) gUNKNWLastVideoURL = u;
+            if ([u.scheme hasPrefix:@"http"]) {
+                gUNKNWLastVideoURL = u;
+                static dispatch_once_t o; dispatch_once(&o, ^{ UNKNWDiagLog(@"[dl] AVPlayer is used for playback"); });
+            }
         }
     } @catch (__unused id e) {}
 }
 %end
+
+// Diagnostic: dump the class names in a view's layer + subview subtree.
+static void UNKNWDumpTree(UIView *v, NSMutableString *s, int depth) {
+    if (!v || depth > 5) return;
+    [s appendFormat:@" V:%@", NSStringFromClass(object_getClass(v))];
+    for (CALayer *l in v.layer.sublayers) {
+        NSString *ln = NSStringFromClass(object_getClass(l));
+        if ([ln containsString:@"Player"] || [ln containsString:@"SampleBuffer"] || [ln containsString:@"Video"] || [ln containsString:@"Metal"])
+            [s appendFormat:@" L:%@", ln];
+    }
+    for (UIView *sv in v.subviews) UNKNWDumpTree(sv, s, depth + 1);
+}
 
 %hook IGSundialViewerVideoCell
 - (void)didMoveToWindow { %orig; UNKNWAddLongPress(self, @selector(unknw_save:)); }
@@ -140,6 +155,12 @@ static void UNKNWAddLongPress(UIView *v, SEL action) {
 - (void)unknw_save:(UILongPressGestureRecognizer *)g {
     if (g.state != UIGestureRecognizerStateBegan) return;
     NSURL *u = UNKNWVideoURLInView(self, 0) ?: gUNKNWLastVideoURL;  // this cell first, else last played
+    if (!u) {
+        NSMutableString *s = [NSMutableString stringWithString:@"[dl] reel tree:"];
+        UNKNWDumpTree(self, s, 0);
+        [s appendFormat:@" | lastAVPlayerURL=%@", gUNKNWLastVideoURL ? @"set" : @"nil"];
+        UNKNWDiagLog(s);
+    }
     UNKNWSaveVideoURL(u);
 }
 %end
@@ -148,7 +169,18 @@ static void UNKNWAddLongPress(UIView *v, SEL action) {
 - (void)didMoveToWindow { %orig; UNKNWAddLongPress(self, @selector(unknw_save:)); }
 %new
 - (void)unknw_save:(UILongPressGestureRecognizer *)g {
-    if (g.state == UIGestureRecognizerStateBegan) UNKNWSaveImage(UNKNWLargestImage(self, 0));
+    if (g.state != UIGestureRecognizerStateBegan) return;
+    // Prefer a full-resolution URL over the small rendered thumbnail.
+    NSURL *hd = nil;
+    for (NSString *key in @[@"overrideProfilePicURL", @"_overrideProfilePicURL", @"animatedImageURL", @"_animatedImageURL"]) {
+        @try { id v = [self valueForKey:key]; if ([v isKindOfClass:NSURL.class]) { hd = v; break; } } @catch (__unused id e) {}
+    }
+    if (hd) { UNKNWSaveVideoURL(hd); return; }  // downloadURL handles images too
+    // Diagnostic: record what's available so we can resolve HD precisely.
+    UIImage *img = UNKNWLargestImage(self, 0);
+    UNKNWDiagLog([NSString stringWithFormat:@"[dp] img=%@ override=%@ ivars see log",
+                  img ? NSStringFromCGSize(img.size) : @"nil", hd ? @"set" : @"nil"]);
+    UNKNWSaveImage(img);
 }
 %end
 
