@@ -14,8 +14,12 @@
 #import "../Core/UNKNWVault.h"
 #import <objc/runtime.h>
 
-// ---- Instagram model interop (shape of the objects we read) ----
-@interface IGImageURL_U : NSObject
+// ---- Instagram class/model interop (shape of the objects we hook/read) ----
+@interface IGSundialViewerVideoCell : UIView
+@property (readonly, nonatomic) id video; // IGMedia
+@end
+@interface IGProfilePictureImageView : UIImageView
+@property (nonatomic, readonly) id user;  // IGUser
 @end
 @interface IGUser_U : NSObject
 - (NSURL *)HDProfilePicURL;
