@@ -44,6 +44,32 @@ static void UNKNWToast(NSString *msg) {
     });
 }
 
+#pragma mark - find the playing video URL inside a view's layer subtree
+
+static NSURL *UNKNWURLFromLayer(CALayer *layer, int depth) {
+    if (!layer || depth > 8) return nil;
+    if ([layer isKindOfClass:AVPlayerLayer.class]) {
+        @try {
+            AVPlayer *p = ((AVPlayerLayer *)layer).player;
+            AVAsset *a = p.currentItem.asset;
+            if ([a isKindOfClass:AVURLAsset.class]) {
+                NSURL *u = ((AVURLAsset *)a).URL;
+                if ([u.scheme hasPrefix:@"http"]) return u;
+            }
+        } @catch (__unused id e) {}
+    }
+    for (CALayer *sub in layer.sublayers) { NSURL *u = UNKNWURLFromLayer(sub, depth + 1); if (u) return u; }
+    return nil;
+}
+
+static NSURL *UNKNWVideoURLInView(UIView *v, int depth) {
+    if (!v || depth > 8) return nil;
+    NSURL *u = UNKNWURLFromLayer(v.layer, 0);
+    if (u) return u;
+    for (UIView *sv in v.subviews) { NSURL *r = UNKNWVideoURLInView(sv, depth + 1); if (r) return r; }
+    return nil;
+}
+
 #pragma mark - save helpers
 
 static void UNKNWSaveVideoURL(NSURL *url) {
@@ -112,7 +138,9 @@ static void UNKNWAddLongPress(UIView *v, SEL action) {
 - (void)didMoveToWindow { %orig; UNKNWAddLongPress(self, @selector(unknw_save:)); }
 %new
 - (void)unknw_save:(UILongPressGestureRecognizer *)g {
-    if (g.state == UIGestureRecognizerStateBegan) UNKNWSaveVideoURL(gUNKNWLastVideoURL);
+    if (g.state != UIGestureRecognizerStateBegan) return;
+    NSURL *u = UNKNWVideoURLInView(self, 0) ?: gUNKNWLastVideoURL;  // this cell first, else last played
+    UNKNWSaveVideoURL(u);
 }
 %end
 
