@@ -122,6 +122,7 @@ extern void UNKNWInitDownloadAudioMsg(void);
 extern void UNKNWInitSendAudioFromFile(void);
 extern void UNKNWInitConfirmCalls(void);
 extern void UNKNWInitReelsAutoAdvance(void);
+extern void UNKNWInitReelsLimit(void);
 extern void UNKNWInitConfirmLike(void);
 extern void UNKNWInitConfirmFollow(void);
 extern void UNKNWInitCopyText(void);

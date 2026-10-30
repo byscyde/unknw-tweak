@@ -91,7 +91,7 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
                        defaultOn:NO init:UNKNWInitReelsAutoAdvance],
             [UNKNWFeature toggle:kUNKNWReelsLimitOnKey category:cReels section:@"Playback"
                            title:@"Limit reels" detail:@"Stop after a set number of reels per session"
-                       defaultOn:NO init:NULL],
+                       defaultOn:NO init:UNKNWInitReelsLimit],
             [UNKNWFeature stepper:kUNKNWReelsLimitCountKey category:cReels section:@"Playback"
                             title:@"Reel limit" detail:@"Reels per session when limiting is on"
                             value:30 min:5 max:200 step:5],
