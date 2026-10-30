@@ -149,6 +149,7 @@
     // it to a named album in the SAME change block can fail the whole save, so
     // the album is handled separately and best-effort.
     __block NSString *localId = nil;
+    __weak typeof(self) weakSelf = self;
     [PHPhotoLibrary.sharedPhotoLibrary performChanges:^{
         PHAssetChangeRequest *req = isVideo
             ? [PHAssetChangeRequest creationRequestForAssetFromVideoAtFileURL:fileURL]
@@ -156,9 +157,9 @@
         localId = req.placeholderForCreatedAsset.localIdentifier;
     } completionHandler:^(BOOL success, NSError *error) {
         if (success && albumName.length && localId) {
-            [self addAsset:localId toAlbum:albumName completion:^{ [self finish:completion success:YES error:nil]; }];
+            [weakSelf addAsset:localId toAlbum:albumName completion:^{ [weakSelf finish:completion success:YES error:nil]; }];
         } else {
-            [self finish:completion success:success error:error];
+            [weakSelf finish:completion success:success error:error];
         }
     }];
 }
