@@ -119,6 +119,10 @@ static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = _category;
+    // Let rows grow so a full-width segmented control sits on its own line
+    // instead of overflowing across the cell.
+    self.tableView.rowHeight = UITableViewAutomaticDimension;
+    self.tableView.estimatedRowHeight = 64;
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
@@ -139,12 +143,14 @@ static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    UNKNWFeature *feature = [self featureAt:indexPath];
+    if (feature.kind == UNKNWFeatureKindSegment) return [self segmentCellForFeature:feature];
+
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     cell.detailTextLabel.numberOfLines = 0;
     cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
 
-    UNKNWFeature *feature = [self featureAt:indexPath];
     cell.textLabel.text = feature.title;
     cell.detailTextLabel.text = feature.detail;
     cell.imageView.image = [UIImage systemImageNamed:UNKNWFeatureIcon(feature.key)];
@@ -173,16 +179,60 @@ static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
             cell.accessoryView = stepper;
             break;
         }
-        case UNKNWFeatureKindSegment: {
-            UISegmentedControl *segment = [[UISegmentedControl alloc] initWithItems:feature.options];
-            segment.selectedSegmentIndex = (NSInteger)UNKNWPrefNumber(feature.key, feature.defaultNumber);
-            [segment sizeToFit];
-            objc_setAssociatedObject(segment, kFeatureKey, feature, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            [segment addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = segment;
-            break;
-        }
+        case UNKNWFeatureKindSegment:
+            break; // handled by -segmentCellForFeature: above
     }
+    return cell;
+}
+
+// A full-width segmented control on its own line, under the title/detail, so
+// long option lists never overflow across the cell.
+- (UITableViewCell *)segmentCellForFeature:(UNKNWFeature *)feature {
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    cell.selectionStyle = UITableViewCellSelectionStyleNone;
+
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:UNKNWFeatureIcon(feature.key)]];
+    icon.tintColor = UNKNWCategoryColor(_category);
+    icon.contentMode = UIViewContentModeScaleAspectFit;
+    [icon.widthAnchor constraintEqualToConstant:24].active = YES;
+    [icon.heightAnchor constraintEqualToConstant:24].active = YES;
+
+    UILabel *title = [UILabel new];
+    title.text = feature.title;
+    title.font = [UIFont systemFontOfSize:17];
+    UILabel *detail = [UILabel new];
+    detail.text = feature.detail;
+    detail.font = [UIFont systemFontOfSize:13];
+    detail.textColor = [UIColor secondaryLabelColor];
+    detail.numberOfLines = 0;
+
+    UIStackView *textStack = [[UIStackView alloc] initWithArrangedSubviews:@[title, detail]];
+    textStack.axis = UILayoutConstraintAxisVertical;
+    textStack.spacing = 2;
+
+    UIStackView *headerRow = [[UIStackView alloc] initWithArrangedSubviews:@[icon, textStack]];
+    headerRow.axis = UILayoutConstraintAxisHorizontal;
+    headerRow.spacing = 12;
+    headerRow.alignment = UIStackViewAlignmentCenter;
+
+    UISegmentedControl *segment = [[UISegmentedControl alloc] initWithItems:feature.options];
+    segment.selectedSegmentIndex = (NSInteger)UNKNWPrefNumber(feature.key, feature.defaultNumber);
+    segment.selectedSegmentTintColor = UNKNWAccent();
+    objc_setAssociatedObject(segment, kFeatureKey, feature, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [segment addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
+
+    UIStackView *outer = [[UIStackView alloc] initWithArrangedSubviews:@[headerRow, segment]];
+    outer.axis = UILayoutConstraintAxisVertical;
+    outer.spacing = 10;
+    outer.translatesAutoresizingMaskIntoConstraints = NO;
+    [cell.contentView addSubview:outer];
+    UILayoutGuide *m = cell.contentView.layoutMarginsGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [outer.topAnchor constraintEqualToAnchor:m.topAnchor constant:6],
+        [outer.bottomAnchor constraintEqualToAnchor:m.bottomAnchor constant:-6],
+        [outer.leadingAnchor constraintEqualToAnchor:m.leadingAnchor],
+        [outer.trailingAnchor constraintEqualToAnchor:m.trailingAnchor],
+    ]];
     return cell;
 }
 

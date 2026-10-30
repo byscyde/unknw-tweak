@@ -21,6 +21,9 @@
 @interface IGVideoFeedViewController : UIViewController @end
 @interface IGChainingFeedViewController : UIViewController @end
 
+// The story viewer inserts ad "reels" into its list (incl. realtime insertion).
+@interface IGStoryViewerViewController : UIViewController @end
+
 // Reels (Sundial) ads are rendered by dedicated IGListKit section controllers.
 @interface IGSundialAdsBaseSectionController : NSObject @end
 @interface IGSundialAd4AdSectionController : NSObject @end
@@ -81,6 +84,20 @@ static NSArray *UNKNWFilterAds(NSArray *items) {
     return out;
 }
 
+// Drop ad reels from a story-viewer reel list (keeps organic + non-ad netego).
+static NSArray *UNKNWFilterAdReels(NSArray *reels) {
+    if (![reels isKindOfClass:NSArray.class] || !UNKNWPrefBool(kUNKNWHideAdsKey, YES)) return reels;
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:reels.count];
+    for (id r in reels) {
+        BOOL ad = NO;
+        @try {
+            if ([r respondsToSelector:@selector(isAd)]) ad = ((BOOL (*)(id, SEL))objc_msgSend)(r, @selector(isAd));
+        } @catch (__unused id e) {}
+        if (!ad) [out addObject:r];
+    }
+    return out;
+}
+
 %group UNKNWHideAds
 
 %hook IGMainFeedListAdapterDataSource
@@ -116,6 +133,11 @@ static NSArray *UNKNWFilterAds(NSArray *items) {
 %end
 %hook IGSundialAdsShowreelNativeSectionController
 - (NSInteger)numberOfItems { return UNKNWPrefBool(kUNKNWHideAdsKey, YES) ? 0 : %orig; }
+%end
+
+// Stories: filter ad reels out of the viewer's list (covers realtime insertion).
+%hook IGStoryViewerViewController
+- (void)updateReels:(NSArray *)reels { %orig(UNKNWFilterAdReels(reels)); }
 %end
 
 %end

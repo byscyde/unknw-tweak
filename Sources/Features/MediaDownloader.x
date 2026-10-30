@@ -21,7 +21,7 @@
 @end
 @interface IGFeedPhotoView : UIView
 @end
-@interface IGStoryViewerCell : UIView
+@interface IGStoryFullscreenCell : UIView
 @end
 
 // Declares the %new save selectors so cross-calls like [self unknw_doSave]
@@ -362,9 +362,17 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 }
 %new
 - (void)unknw_doSave {
+    // Download the actual image the view loaded (full file) rather than the
+    // small re-rendered bitmap. These are ObjC accessors — safe via objc_msgSend.
     NSURL *hd = nil;
-    for (NSString *key in @[@"overrideProfilePicURL", @"_overrideProfilePicURL", @"animatedImageURL", @"_animatedImageURL"]) {
-        @try { id v = [self valueForKey:key]; if ([v isKindOfClass:NSURL.class]) { hd = v; break; } } @catch (__unused id e) {}
+    for (NSString *name in @[@"currentURL", @"imageURL", @"imageUrl", @"url", @"profilePicURL", @"profilePicUrl"]) {
+        SEL s = NSSelectorFromString(name);
+        if (![self respondsToSelector:s]) continue;
+        @try {
+            id v = ((id (*)(id, SEL))objc_msgSend)(self, s);
+            if ([v isKindOfClass:NSURL.class]) { hd = v; break; }
+            if ([v isKindOfClass:NSString.class] && [(NSString *)v length]) { hd = [NSURL URLWithString:v]; break; }
+        } @catch (__unused id e) {}
     }
     if (hd) { UNKNWSaveVideoURL(hd); return; }  // downloadURL handles images too
     UNKNWSaveImage(UNKNWLargestImage(self, 0));
@@ -395,7 +403,7 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 
 // Story — button only (a long-press would fight the story's hold-to-pause).
 // Saves the current story's video if it has one, otherwise the shown image.
-%hook IGStoryViewerCell
+%hook IGStoryFullscreenCell
 - (void)didMoveToWindow {
     %orig;
     UNKNWInstallSaveControls(self, @selector(unknw_save:), @selector(unknw_saveTap:), YES, NO);
