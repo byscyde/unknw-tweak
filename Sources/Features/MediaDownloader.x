@@ -178,9 +178,9 @@ static BOOL UNKNWIsMediaModel(id o) {
 static id UNKNWMediaFromObjectDepth(id obj, int depth) {
     if (!obj || depth > 2) return nil;
     if (UNKNWIsMediaModel(obj)) return obj;
-    for (NSString *name in @[@"media", @"currentMedia", @"reelMedia", @"currentItem",
-                             @"currentReel", @"reel", @"feedItem", @"item", @"object",
-                             @"post", @"activeMedia", @"focusedMedia"]) {
+    for (NSString *name in @[@"media", @"currentMedia", @"reelMedia", @"currentStoryItem",
+                             @"storyItem", @"currentItem", @"currentReel", @"reel",
+                             @"feedItem", @"item", @"object", @"post", @"activeMedia", @"focusedMedia"]) {
         id m = UNKNWMsgSend(obj, NSSelectorFromString(name));
         if (!m || m == obj) continue;
         if (UNKNWIsMediaModel(m)) return m;
@@ -287,8 +287,9 @@ static NSURL *UNKNWImageURLFromMedia(id media) {
 static id UNKNWCurrentMediaForView(UIView *view) {
     id media = nil;
     for (UIResponder *r = view; r && !media; r = r.nextResponder) {
-        for (NSString *name in @[@"currentMedia", @"activeMedia", @"focusedMedia",
-                                 @"currentPost", @"currentReel", @"currentItem"]) {
+        for (NSString *name in @[@"currentMedia", @"currentStoryItem", @"storyItem",
+                                 @"activeMedia", @"focusedMedia", @"currentPost",
+                                 @"currentReel", @"currentItem"]) {
             SEL s = NSSelectorFromString(name);
             if (![r respondsToSelector:s]) continue;
             @try {
@@ -395,37 +396,87 @@ static void UNKNWFetchToTemp(NSString *urlStr, NSString *ext, NSString *tag, voi
     [t resume];
 }
 
-// Mux a video-only file and an audio-only file into one MP4.
+// Pump one reader-output's encoded samples into one writer-input (passthrough —
+// no decode, so IG's fragmented/HEVC tracks remux fine), then leave the group.
+static void UNKNWPump(AVAssetReaderTrackOutput *readerOut, AVAssetWriterInput *writerIn,
+                      dispatch_queue_t q, dispatch_group_t group) {
+    dispatch_group_enter(group);
+    [writerIn requestMediaDataWhenReadyOnQueue:q usingBlock:^{
+        while (writerIn.isReadyForMoreMediaData) {
+            CMSampleBufferRef buf = [readerOut copyNextSampleBuffer];
+            if (buf) {
+                BOOL ok = [writerIn appendSampleBuffer:buf];
+                CFRelease(buf);
+                if (!ok) { [writerIn markAsFinished]; dispatch_group_leave(group); return; }
+            } else {
+                [writerIn markAsFinished];
+                dispatch_group_leave(group);
+                return;
+            }
+        }
+    }];
+}
+
+// Remux a DASH video file (+ optional audio file) into a standard MP4 the Photos
+// library accepts — the same AVAssetReader → copyNextSampleBuffer →
+// AVAssetWriterInput technique Regram uses. No re-encode (avoids "Cannot Decode")
+// and a clean MP4 container (avoids PHPhotosError 3302).
 static void UNKNWMux(NSURL *videoFile, NSURL *audioFile, void (^done)(NSURL *out)) {
-    AVMutableComposition *comp = [AVMutableComposition composition];
     @try {
         AVURLAsset *va = [AVURLAsset assetWithURL:videoFile];
         AVAssetTrack *vt = [va tracksWithMediaType:AVMediaTypeVideo].firstObject;
-        if (!vt) { done(nil); return; }
-        AVMutableCompositionTrack *cvt = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
-        [cvt insertTimeRange:CMTimeRangeMake(kCMTimeZero, va.duration) ofTrack:vt atTime:kCMTimeZero error:nil];
-        cvt.preferredTransform = vt.preferredTransform;
-        if (audioFile) {
-            AVURLAsset *aa = [AVURLAsset assetWithURL:audioFile];
-            AVAssetTrack *at = [aa tracksWithMediaType:AVMediaTypeAudio].firstObject;
-            if (at) {
-                AVMutableCompositionTrack *cat = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
-                [cat insertTimeRange:CMTimeRangeMake(kCMTimeZero, va.duration) ofTrack:at atTime:kCMTimeZero error:nil];
-            }
+        if (!vt) { UNKNWDiagLog(@"[dl] remux: no video track"); done(nil); return; }
+        AVURLAsset *aa = audioFile ? [AVURLAsset assetWithURL:audioFile] : nil;
+        AVAssetTrack *at = [aa tracksWithMediaType:AVMediaTypeAudio].firstObject;
+
+        NSError *err = nil;
+        AVAssetReader *vReader = [[AVAssetReader alloc] initWithAsset:va error:&err];
+        AVAssetReaderTrackOutput *vOut = [[AVAssetReaderTrackOutput alloc] initWithTrack:vt outputSettings:nil];
+        vOut.alwaysCopiesSampleData = NO;
+        [vReader addOutput:vOut];
+
+        AVAssetReader *aReader = nil; AVAssetReaderTrackOutput *aOut = nil;
+        if (at) {
+            aReader = [[AVAssetReader alloc] initWithAsset:aa error:&err];
+            aOut = [[AVAssetReaderTrackOutput alloc] initWithTrack:at outputSettings:nil];
+            aOut.alwaysCopiesSampleData = NO;
+            [aReader addOutput:aOut];
         }
-    } @catch (__unused id e) { done(nil); return; }
-    NSURL *out = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
-                  URLByAppendingPathComponent:[NSString stringWithFormat:@"unknw-%@.mp4", NSUUID.UUID.UUIDString]];
-    // Re-encode (not passthrough): IG's DASH tracks are fragmented/HEVC, which
-    // Photos rejects on import (PHPhotosError 3302). HighestQuality produces a
-    // standard MP4 the Photos library accepts.
-    AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetHighestQuality];
-    ex.outputURL = out; ex.outputFileType = AVFileTypeMPEG4; ex.shouldOptimizeForNetworkUse = YES;
-    [ex exportAsynchronouslyWithCompletionHandler:^{
-        UNKNWDiagLog([NSString stringWithFormat:@"[dl] mux status=%ld err=%@",
-                      (long)ex.status, ex.error.localizedDescription ?: @"-"]);
-        done(ex.status == AVAssetExportSessionStatusCompleted ? out : nil);
-    }];
+
+        NSURL *out = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
+                      URLByAppendingPathComponent:[NSString stringWithFormat:@"unknw-%@.mp4", NSUUID.UUID.UUIDString]];
+        AVAssetWriter *writer = [[AVAssetWriter alloc] initWithURL:out fileType:AVFileTypeMPEG4 error:&err];
+        AVAssetWriterInput *vIn = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeVideo outputSettings:nil
+                                   sourceFormatHint:(__bridge CMFormatDescriptionRef)vt.formatDescriptions.firstObject];
+        vIn.expectsMediaDataInRealTime = NO;
+        vIn.transform = vt.preferredTransform;
+        [writer addInput:vIn];
+        AVAssetWriterInput *aIn = nil;
+        if (at) {
+            aIn = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeAudio outputSettings:nil
+                   sourceFormatHint:(__bridge CMFormatDescriptionRef)at.formatDescriptions.firstObject];
+            aIn.expectsMediaDataInRealTime = NO;
+            [writer addInput:aIn];
+        }
+
+        if (![vReader startReading] || (aReader && ![aReader startReading]) ||
+            ![writer startWriting]) {
+            UNKNWDiagLog([NSString stringWithFormat:@"[dl] remux start fail: %@", writer.error.localizedDescription ?: vReader.error.localizedDescription ?: @"?"]);
+            done(nil); return;
+        }
+        [writer startSessionAtSourceTime:kCMTimeZero];
+
+        dispatch_group_t group = dispatch_group_create();
+        UNKNWPump(vOut, vIn, dispatch_queue_create("unknw.remux.v", DISPATCH_QUEUE_SERIAL), group);
+        if (aIn) UNKNWPump(aOut, aIn, dispatch_queue_create("unknw.remux.a", DISPATCH_QUEUE_SERIAL), group);
+        dispatch_group_notify(group, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            [writer finishWritingWithCompletionHandler:^{
+                UNKNWDiagLog([NSString stringWithFormat:@"[dl] remux status=%ld err=%@",
+                              (long)writer.status, writer.error.localizedDescription ?: @"-"]);
+                done(writer.status == AVAssetWriterStatusCompleted ? out : nil);
+            }];
+        });
+    } @catch (__unused id e) { UNKNWDiagLog(@"[dl] remux exception"); done(nil); }
 }
 
 // Parse the MPD, download the best video (+audio), mux, and save.
@@ -437,10 +488,12 @@ static void UNKNWDownloadDASH(NSString *mpd) {
     UNKNWToast(@"Downloading…");
     UNKNWFetchToTemp(vurl, @"mp4", @"video", ^(NSURL *vfile){
         if (!vfile) { UNKNWToast(@"Download failed"); return; }
-        if (!aurl) { UNKNWSaveLocalVideo(vfile); return; }
+        if (!aurl) { UNKNWMux(vfile, nil, ^(NSURL *vout){ UNKNWSaveLocalVideo(vout); }); return; }
         UNKNWFetchToTemp(aurl, @"m4a", @"audio", ^(NSURL *afile){
             UNKNWMux(vfile, afile, ^(NSURL *out){
-                UNKNWSaveLocalVideo(out ?: vfile);  // fall back to video-only on mux failure
+                if (out) { UNKNWSaveLocalVideo(out); return; }
+                // audio remux failed — remux video-only so a clean MP4 still saves
+                UNKNWMux(vfile, nil, ^(NSURL *vout){ UNKNWSaveLocalVideo(vout); });
             });
         });
     });
@@ -573,37 +626,33 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 }
 %new
 - (void)unknw_doSave {
-    // Full-resolution profile picture: find the IGUser (on the view or up the
-    // responder chain) and take its HD profile-pic URL — the largest IG serves.
+    // Full-resolution profile picture. Walk the responder chain (reaches the
+    // fullscreen profile viewer) and take the HD URL directly, or via the IGUser.
     NSURL *hd = nil;
     SEL hiSel = NSSelectorFromString(@"hdProfilePicUrlInfo");
-    SEL hdSel = NSSelectorFromString(@"hdProfilePicURL");
-    id user = nil;
-    for (UIResponder *r = self; r && !user; r = r.nextResponder) {
-        for (NSString *uk in @[@"user", @"displayedUser", @"profileUser", @"currentUser", @"account"]) {
+    for (UIResponder *r = self; r && !hd; r = r.nextResponder) {
+        // profile-specific URL accessors on the responder itself
+        for (NSString *k in @[@"hdProfilePicURL", @"profilePicURL", @"profilePicUrl"]) {
+            NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(r, NSSelectorFromString(k)));
+            if (u) { hd = u; break; }
+        }
+        if (hd) break;
+        id info = UNKNWMsgSend(r, hiSel);
+        hd = UNKNWCoerceURL(UNKNWMsgSend(info, @selector(url))) ?: UNKNWCoerceURL(UNKNWMsgSend(info, @selector(URL)));
+        if (hd) break;
+        // via the user model
+        for (NSString *uk in @[@"user", @"displayedUser", @"profileUser", @"currentUser"]) {
             id u = UNKNWMsgSend(r, NSSelectorFromString(uk));
-            if (u && ([u respondsToSelector:hiSel] || [u respondsToSelector:hdSel])) { user = u; break; }
+            if (!u) continue;
+            hd = UNKNWCoerceURL(UNKNWMsgSend(u, NSSelectorFromString(@"hdProfilePicURL")));
+            if (!hd) { id i2 = UNKNWMsgSend(u, hiSel); hd = UNKNWCoerceURL(UNKNWMsgSend(i2, @selector(url))) ?: UNKNWCoerceURL(UNKNWMsgSend(i2, @selector(URL))); }
+            if (!hd) hd = UNKNWCoerceURL(UNKNWMsgSend(u, NSSelectorFromString(@"profilePicURL")));
+            if (hd) break;
         }
     }
-    if (user) {
-        hd = UNKNWCoerceURL(UNKNWMsgSend(user, hdSel));
-        if (!hd) {
-            id info = UNKNWMsgSend(user, hiSel);
-            hd = UNKNWCoerceURL(UNKNWMsgSend(info, @selector(url)))
-              ?: UNKNWCoerceURL(UNKNWMsgSend(info, @selector(URL)));
-        }
-        if (!hd) hd = UNKNWCoerceURL(UNKNWMsgSend(user, NSSelectorFromString(@"profilePicURL")));
-        UNKNWDiagLog([NSString stringWithFormat:@"[dl] profile user=%@ hd=%@",
-                      NSStringFromClass(object_getClass(user)), hd ? @"yes" : @"no"]);
-    } else {
-        UNKNWDiagLog(@"[dl] profile: no user in responder chain");
-    }
-    if (!hd) hd = UNKNWCoerceURL(objc_getAssociatedObject(self, kUNKNWProfileURL));  // URL this view loaded (HD in fullscreen)
-    if (!hd) for (NSString *k in @[@"imageURL", @"imageUrl", @"currentURL", @"url"]) {
-        NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(self, NSSelectorFromString(k)));
-        if (u) { hd = u; break; }
-    }
-    if (hd) { UNKNWDiagLog([NSString stringWithFormat:@"[dl] profile saving %@", hd.absoluteString]); UNKNWSaveVideoURL(hd); return; }
+    if (!hd) hd = UNKNWCoerceURL(objc_getAssociatedObject(self, kUNKNWProfileURL));  // URL this view loaded
+    UNKNWDiagLog([NSString stringWithFormat:@"[dl] profile hd=%@", hd ? hd.absoluteString : @"NONE"]);
+    if (hd) { UNKNWSaveVideoURL(hd); return; }  // downloadURL handles images too
     UNKNWSaveImage(UNKNWLargestImage(self, 0));
 }
 %new
