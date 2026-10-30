@@ -7,44 +7,47 @@
 
 static const void *kFeatureKey = &kFeatureKey;
 
-#pragma mark - Theme
+#pragma mark - Theme (scyde.dev design language)
 
-// UNKNW's signature accent (violet) and a distinct colour per category so the
-// menu reads like a bespoke app rather than a plain settings list.
-static UIColor *UNKNWAccent(void) {
-    return [UIColor colorWithRed:0.42 green:0.29 blue:0.98 alpha:1.0];
-}
+// Signature palette: a violet→gold gradient over a near-black surface.
+static UIColor *UNKNWAccent(void)   { return [UIColor colorWithRed:0.557 green:0.510 blue:0.941 alpha:1.0]; } // violet #8E82F0
+static UIColor *UNKNWGold(void)     { return [UIColor colorWithRed:0.906 green:0.773 blue:0.420 alpha:1.0]; } // gold   #E7C56B
+static UIColor *UNKNWBG(void)       { return [UIColor colorWithRed:0.039 green:0.043 blue:0.055 alpha:1.0]; } // #0A0B0E
+static UIColor *UNKNWSurface(void)  { return [UIColor colorWithRed:0.086 green:0.090 blue:0.106 alpha:1.0]; } // #16171B
+static UIColor *UNKNWHairline(void) { return [UIColor colorWithWhite:1.0 alpha:0.07]; }
+static UIColor *UNKNWTextDim(void)  { return [UIColor colorWithRed:0.557 green:0.561 blue:0.600 alpha:1.0]; } // #8E8F99
 
+// Per-row glyph tint, kept to a cohesive violet/gold family (scyde uses mostly
+// violet glyphs with gold highlights).
 static UIColor *UNKNWCategoryColor(NSString *category) {
     static NSDictionary<NSString *, UIColor *> *colors = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
+        UIColor *v = UNKNWAccent();
+        UIColor *v2 = [UIColor colorWithRed:0.64 green:0.58 blue:0.97 alpha:1];
         colors = @{
-            @"Feed":             [UIColor colorWithRed:0.20 green:0.60 blue:0.98 alpha:1],
-            @"Reels":            [UIColor colorWithRed:0.65 green:0.30 blue:0.98 alpha:1],
-            @"Stories":          [UIColor colorWithRed:0.98 green:0.45 blue:0.30 alpha:1],
-            @"Messages":         [UIColor colorWithRed:0.18 green:0.78 blue:0.55 alpha:1],
-            @"Profile":          [UIColor colorWithRed:0.98 green:0.35 blue:0.55 alpha:1],
-            @"Download Manager": [UIColor colorWithRed:0.30 green:0.52 blue:0.98 alpha:1],
-            @"General":          [UIColor colorWithRed:0.55 green:0.57 blue:0.62 alpha:1],
+            @"Feed": v, @"Reels": v2, @"Stories": UNKNWGold(),
+            @"Messages": v, @"Profile": v2, @"Download Manager": v, @"General": UNKNWTextDim(),
         };
     });
     return colors[category] ?: UNKNWAccent();
 }
 
-// A rounded, filled "app icon" chip with a white SF Symbol — the iOS-Settings
-// look, rendered once into an image so the table never tints it.
-static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
-    CGSize size = CGSizeMake(29, 29);
+// scyde-style icon tile: dark squircle + hairline border + tinted glyph.
+static UIImage *UNKNWIconChip(NSString *symbol, UIColor *tint) {
+    CGSize size = CGSizeMake(30, 30);
     UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:size];
     UIImage *out = [r imageWithActions:^(UIGraphicsImageRendererContext *__unused ctx) {
-        UIBezierPath *p = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, size.width, size.height) cornerRadius:7];
-        [bg setFill];
+        UIBezierPath *p = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0.75, 0.75, size.width - 1.5, size.height - 1.5) cornerRadius:9];
+        [[UIColor colorWithRed:0.118 green:0.122 blue:0.149 alpha:1.0] setFill];
         [p fill];
+        p.lineWidth = 1.0;
+        [[UIColor colorWithWhite:1.0 alpha:0.10] setStroke];
+        [p stroke];
         UIImageSymbolConfiguration *cfg =
             [UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightSemibold];
         UIImage *s = [[UIImage systemImageNamed:symbol withConfiguration:cfg]
-                      imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+                      imageWithTintColor:tint renderingMode:UIImageRenderingModeAlwaysOriginal];
         CGSize ss = s.size;
         [s drawInRect:CGRectMake((size.width - ss.width) / 2.0, (size.height - ss.height) / 2.0, ss.width, ss.height)];
     }];
@@ -57,41 +60,63 @@ static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
 @end
 
 @implementation UNKNWHeaderView {
-    CAGradientLayer *_grad;
+    CAGradientLayer *_wash;    // violet→gold diagonal glow over the dark card
+    CAGradientLayer *_topbar;  // thin violet→gold accent line (scyde's progress bar)
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
-        _grad = [CAGradientLayer layer];
-        _grad.colors = @[(id)[UIColor colorWithRed:0.42 green:0.29 blue:0.98 alpha:1].CGColor,
-                         (id)[UIColor colorWithRed:0.86 green:0.24 blue:0.56 alpha:1].CGColor];
-        _grad.startPoint = CGPointMake(0, 0);
-        _grad.endPoint = CGPointMake(1, 1);
-        _grad.cornerRadius = 18;
-        [self.layer addSublayer:_grad];
+        self.backgroundColor = UIColor.clearColor;
 
+        _topbar = [CAGradientLayer layer];
+        _topbar.colors = @[(id)UNKNWAccent().CGColor, (id)UNKNWGold().CGColor];
+        _topbar.startPoint = CGPointMake(0, 0.5);
+        _topbar.endPoint = CGPointMake(1, 0.5);
+        _topbar.cornerRadius = 1.5;
+        [self.layer addSublayer:_topbar];
+
+        _wash = [CAGradientLayer layer];
+        _wash.colors = @[(id)[UNKNWAccent() colorWithAlphaComponent:0.32].CGColor,
+                         (id)[UIColor colorWithRed:0.086 green:0.090 blue:0.110 alpha:1.0].CGColor,
+                         (id)[UNKNWGold() colorWithAlphaComponent:0.24].CGColor];
+        _wash.locations = @[@0.0, @0.55, @1.0];
+        _wash.startPoint = CGPointMake(0.05, 0.0);
+        _wash.endPoint = CGPointMake(0.95, 1.0);
+        _wash.cornerRadius = 20;
+        _wash.borderWidth = 1.0;
+        _wash.borderColor = [UIColor colorWithWhite:1.0 alpha:0.08].CGColor;
+        [self.layer addSublayer:_wash];
+
+        // Wordmark: "UNKNW" in white heavy with a gold period (scyde's mark).
+        UIFont *markFont = [UIFont systemFontOfSize:34 weight:UIFontWeightHeavy];
+        NSMutableAttributedString *mark =
+            [[NSMutableAttributedString alloc] initWithString:@"UNKNW"
+                attributes:@{NSForegroundColorAttributeName: UIColor.whiteColor, NSFontAttributeName: markFont}];
+        [mark appendAttributedString:[[NSAttributedString alloc] initWithString:@"."
+                attributes:@{NSForegroundColorAttributeName: UNKNWGold(), NSFontAttributeName: markFont}]];
         UILabel *title = [UILabel new];
-        title.text = @"UNKNW";
-        title.font = [UIFont systemFontOfSize:34 weight:UIFontWeightHeavy];
-        title.textColor = UIColor.whiteColor;
+        title.attributedText = mark;
+
         UILabel *sub = [UILabel new];
         sub.text = [NSString stringWithFormat:@"Instagram, your way · v%@", UNKNW_VERSION];
         sub.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-        sub.textColor = [UIColor colorWithWhite:1 alpha:0.85];
+        sub.textColor = [UIColor colorWithWhite:1.0 alpha:0.72];
+
         UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[title, sub]];
         stack.axis = UILayoutConstraintAxisVertical;
-        stack.spacing = 2;
+        stack.spacing = 3;
         stack.translatesAutoresizingMaskIntoConstraints = NO;
         [self addSubview:stack];
         [NSLayoutConstraint activateConstraints:@[
-            [stack.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:36],
-            [stack.centerYAnchor constraintEqualToAnchor:self.centerYAnchor constant:-2],
+            [stack.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:34],
+            [stack.centerYAnchor constraintEqualToAnchor:self.centerYAnchor constant:5],
         ]];
     }
     return self;
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
-    _grad.frame = CGRectInset(self.bounds, 16, 12);
+    _topbar.frame = CGRectMake(16, 0, self.bounds.size.width - 32, 3);
+    _wash.frame = CGRectMake(16, 12, self.bounds.size.width - 32, self.bounds.size.height - 20);
 }
 @end
 
@@ -119,6 +144,9 @@ static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = _category;
+    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    self.tableView.backgroundColor = UNKNWBG();
+    self.tableView.separatorColor = UNKNWHairline();
     // Let rows grow so a full-width segmented control sits on its own line
     // instead of overflowing across the cell.
     self.tableView.rowHeight = UITableViewAutomaticDimension;
@@ -148,8 +176,9 @@ static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
 
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    cell.backgroundColor = UNKNWSurface();
     cell.detailTextLabel.numberOfLines = 0;
-    cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+    cell.detailTextLabel.textColor = UNKNWTextDim();
 
     cell.textLabel.text = feature.title;
     cell.detailTextLabel.text = feature.detail;
@@ -190,6 +219,7 @@ static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
 - (UITableViewCell *)segmentCellForFeature:(UNKNWFeature *)feature {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    cell.backgroundColor = UNKNWSurface();
 
     UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:UNKNWFeatureIcon(feature.key)]];
     icon.tintColor = UNKNWCategoryColor(_category);
@@ -203,7 +233,7 @@ static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
     UILabel *detail = [UILabel new];
     detail.text = feature.detail;
     detail.font = [UIFont systemFontOfSize:13];
-    detail.textColor = [UIColor secondaryLabelColor];
+    detail.textColor = UNKNWTextDim();
     detail.numberOfLines = 0;
 
     UIStackView *textStack = [[UIStackView alloc] initWithArrangedSubviews:@[title, detail]];
@@ -274,10 +304,13 @@ static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"Diagnostics";
-    self.view.backgroundColor = [UIColor systemBackgroundColor];
+    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    self.view.backgroundColor = UNKNWBG();
     _textView = [[UITextView alloc] initWithFrame:self.view.bounds];
     _textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     _textView.editable = NO;
+    _textView.backgroundColor = UNKNWBG();
+    _textView.textColor = [UIColor colorWithWhite:0.86 alpha:1.0];
     _textView.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
     [self.view addSubview:_textView];
     self.navigationItem.rightBarButtonItems = @[
@@ -341,8 +374,23 @@ static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"UNKNW";
-    self.navigationController.navigationBar.prefersLargeTitles = YES;
-    self.navigationController.navigationBar.tintColor = UNKNWAccent();
+    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    self.tableView.backgroundColor = UNKNWBG();
+    self.tableView.separatorColor = UNKNWHairline();
+
+    UINavigationBar *bar = self.navigationController.navigationBar;
+    bar.prefersLargeTitles = YES;
+    bar.tintColor = UNKNWAccent();
+    UINavigationBarAppearance *ap = [UINavigationBarAppearance new];
+    [ap configureWithOpaqueBackground];
+    ap.backgroundColor = UNKNWBG();
+    ap.shadowColor = UIColor.clearColor;
+    ap.largeTitleTextAttributes = @{NSForegroundColorAttributeName: UIColor.whiteColor};
+    ap.titleTextAttributes = @{NSForegroundColorAttributeName: UIColor.whiteColor};
+    bar.standardAppearance = ap;
+    bar.scrollEdgeAppearance = ap;
+    bar.compactAppearance = ap;
+
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
                                                       target:self action:@selector(dismissSelf)];
@@ -373,9 +421,11 @@ static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
     if (indexPath.section == 0) {
         UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        cell.backgroundColor = UNKNWSurface();
+        cell.detailTextLabel.textColor = UNKNWTextDim();
         cell.textLabel.text = @"Enable UNKNW";
         cell.detailTextLabel.text = @"Master switch for all features";
-        cell.imageView.image = UNKNWIconChip(@"bolt.fill", UNKNWAccent());
+        cell.imageView.image = UNKNWIconChip(@"bolt.fill", UNKNWGold());
         UISwitch *toggle = [UISwitch new];
         toggle.onTintColor = UNKNWAccent();
         toggle.on = UNKNWPrefBool(kUNKNWEnabledKey, YES);
@@ -385,6 +435,7 @@ static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
     }
     if (indexPath.section == 1) {
         UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+        cell.backgroundColor = UNKNWSurface();
         NSString *category = _categories[indexPath.row];
         cell.textLabel.text = category;
         cell.imageView.image = UNKNWIconChip(UNKNWCategoryIcon(category), UNKNWCategoryColor(category));
@@ -392,6 +443,8 @@ static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
         return cell;
     }
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    cell.backgroundColor = UNKNWSurface();
+    cell.detailTextLabel.textColor = UNKNWTextDim();
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     if (indexPath.row == 0) {
         NSString *stored = UNKNWLicense.shared.key;
@@ -518,6 +571,7 @@ shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other 
     UNKNWSettingsController *settings = [[UNKNWSettingsController alloc] init];
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:settings];
     nav.modalPresentationStyle = UIModalPresentationFormSheet;
+    nav.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     [top presentViewController:nav animated:YES completion:nil];
 }
 
