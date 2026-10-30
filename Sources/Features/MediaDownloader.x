@@ -21,6 +21,8 @@
 @end
 @interface IGStoryFullscreenCell : UIView
 @end
+@interface IGProfileViewController : UIViewController
+@end
 
 // Declares the %new save selectors so cross-calls like [self unknw_doSave]
 // resolve at compile time (each hooked class supplies its own implementation).
@@ -33,6 +35,7 @@
 static const void *kUNKNWDLInstalled  = &kUNKNWDLInstalled;
 static const void *kUNKNWBtnInstalled = &kUNKNWBtnInstalled;
 static const void *kUNKNWProfileURL   = &kUNKNWProfileURL;  // last URL a profile-pic view loaded
+static id gUNKNWProfileUser = nil;  // the IGUser of the profile currently being viewed
 static NSURL *gUNKNWLastVideoURL = nil;  // most recently played AV video (fallback)
 static id gUNKNWCurrentReelMedia = nil;  // IGMedia of the most-recently-bound reel
 
@@ -613,6 +616,16 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 
 // Profile picture — save the full-resolution image (long-press only: a floating
 // button would not fit the small avatar).
+// Capture the viewed profile's IGUser so the fullscreen profile-pic viewer
+// (a separate Swift VC, not in the avatar's responder chain) can still get the
+// HD URL. IGProfileViewController exposes -user.
+%hook IGProfileViewController
+- (void)viewWillAppear:(BOOL)animated {
+    %orig;
+    @try { id u = UNKNWMsgSend(self, @selector(user)); if (u) gUNKNWProfileUser = u; } @catch (__unused id e) {}
+}
+%end
+
 %hook IGProfilePictureImageView
 - (void)didMoveToWindow {
     %orig;
@@ -649,6 +662,12 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
             if (!hd) hd = UNKNWCoerceURL(UNKNWMsgSend(u, NSSelectorFromString(@"profilePicURL")));
             if (hd) break;
         }
+    }
+    if (!hd && gUNKNWProfileUser) {  // fullscreen viewer: use the viewed profile's user
+        id u = gUNKNWProfileUser;
+        hd = UNKNWCoerceURL(UNKNWMsgSend(u, NSSelectorFromString(@"hdProfilePicURL")));
+        if (!hd) { id i2 = UNKNWMsgSend(u, hiSel); hd = UNKNWCoerceURL(UNKNWMsgSend(i2, @selector(url))) ?: UNKNWCoerceURL(UNKNWMsgSend(i2, @selector(URL))); }
+        if (!hd) hd = UNKNWCoerceURL(UNKNWMsgSend(u, NSSelectorFromString(@"profilePicURL")));
     }
     if (!hd) hd = UNKNWCoerceURL(objc_getAssociatedObject(self, kUNKNWProfileURL));  // URL this view loaded
     UNKNWDiagLog([NSString stringWithFormat:@"[dl] profile hd=%@", hd ? hd.absoluteString : @"NONE"]);
@@ -688,7 +707,15 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 }
 %new
 - (void)unknw_doSave {
-    id media = UNKNWCurrentMediaForView(self);
+    // The cell exposes the current story item via its context (verified from the
+    // IG binary): IGStoryFullscreenCell.currentStoryItemContext.storyItem.
+    id media = nil;
+    @try {
+        id ctx = UNKNWMsgSend(self, @selector(currentStoryItemContext));
+        id item = UNKNWMsgSend(ctx, @selector(storyItem));
+        if (item) media = UNKNWMediaFromObject(item) ?: item;
+    } @catch (__unused id e) {}
+    if (!media) media = UNKNWCurrentMediaForView(self);
     NSURL *v = UNKNWVideoURLFromMedia(media);
     if (v) { UNKNWSaveVideoURL(v); return; }
     NSString *mpd = UNKNWDashManifest(media);
