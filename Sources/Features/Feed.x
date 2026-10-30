@@ -141,8 +141,17 @@ static NSArray *UNKNWFilterAdReels(NSArray *reels) {
 
 %end
 
+// Disable feed video autoplay (EXPERIMENTAL, default off): mark feed media
+// ineligible for (auto)playback. If this also blocks tap-to-play on a given
+// build we tune it — it only affects users who turn it on.
+@interface IGFeedMediaPlaybackEligibility : NSObject @end
 %group UNKNWFeedDisableAutoplay
-// TODO: prevent feed videos from autoplaying.
+%hook IGFeedMediaPlaybackEligibility
+- (BOOL)isMediaEligibleForPlayback:(id)media mediaMap:(id)map withSubItem:(id)sub {
+    if (UNKNWPrefBool(kUNKNWFeedDisableAutoplayKey, NO)) return NO;
+    return %orig;
+}
+%end
 %end
 
 %group UNKNWHideCommentsPreview
