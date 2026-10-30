@@ -30,12 +30,48 @@
 #import "../Core/UNKNWVault.h"
 #import <AVFoundation/AVFoundation.h>
 
+// Interop (verified in the IG 453 class dump):
+//   IGDirectTypingStatusService -updateOutgoingStatusIsActive:threadKey:
+//       threadMetadata:typingStatusType:   sends the outgoing "typing…" status.
+//   IGDirectVideoCallFeatureController -_didTapCallButtonWithCallType:  starts a call.
+@interface IGDirectTypingStatusService : NSObject @end
+@interface IGDirectVideoCallFeatureController : NSObject @end
+
+static UIViewController *UNKNWMsgTopVC(void) {
+    UIWindow *win = nil;
+    for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
+        if ([s isKindOfClass:UIWindowScene.class])
+            for (UIWindow *w in ((UIWindowScene *)s).windows) if (w.isKeyWindow) { win = w; break; }
+    UIViewController *vc = win.rootViewController;
+    while (vc.presentedViewController) vc = vc.presentedViewController;
+    return vc;
+}
+
+static void UNKNWMsgConfirm(NSString *title, void (^onYes)(void)) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *top = UNKNWMsgTopVC();
+        if (!top) { if (onYes) onYes(); return; }
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:title message:nil
+                                                          preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+        [a addAction:[UIAlertAction actionWithTitle:@"Yes" style:UIAlertActionStyleDefault
+                                            handler:^(UIAlertAction *_){ if (onYes) onYes(); }]];
+        [top presentViewController:a animated:YES completion:nil];
+    });
+}
+
 %group UNKNWKeepUnsent
 // TODO: hook the unsend handler; retain the message when kUNKNWKeepUnsentKey ON.
 %end
 
+// Don't broadcast "typing…": skip the outgoing-status send.
 %group UNKNWHideTyping
-// TODO: hook the typing-indicator sender; skip %orig when kUNKNWHideTypingKey ON.
+%hook IGDirectTypingStatusService
+- (void)updateOutgoingStatusIsActive:(BOOL)active threadKey:(id)key threadMetadata:(id)md typingStatusType:(NSInteger)type {
+    if (UNKNWPrefBool(kUNKNWHideTypingKey, NO)) return;
+    %orig;
+}
+%end
 %end
 
 %group UNKNWDownloadAudioMsg
@@ -46,8 +82,14 @@
 // TODO: feed an audio file / extracted track into the voice-message send path.
 %end
 
+// Ask before starting/joining a call.
 %group UNKNWConfirmCalls
-// TODO: confirm before %orig of the call start/join action.
+%hook IGDirectVideoCallFeatureController
+- (void)_didTapCallButtonWithCallType:(NSInteger)callType {
+    if (!UNKNWPrefBool(kUNKNWConfirmCallsKey, NO)) { %orig; return; }
+    UNKNWMsgConfirm(@"Start this call?", ^{ %orig(callType); });
+}
+%end
 %end
 
 void UNKNWInitKeepUnsent(void)       { %init(UNKNWKeepUnsent); }

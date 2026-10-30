@@ -14,6 +14,7 @@
 //       reporting method on demand when kUNKNWManualSeenKey is ON.
 
 #import "../UNKNW.h"
+#import <objc/runtime.h>
 
 // Interop: the story viewer forwards "this item was seen" to its delegate, which
 // is what triggers the outbound seen receipt.
@@ -36,12 +37,38 @@
 
 %end
 
+// Don't send DM read receipts: skip -markLastMessageAsSeen (verified in the IG
+// 453 class dump on IGDirectThreadViewFeatureManager (ObjC) and on the Swift
+// IGDirectMessageListViewController).
+@interface IGDirectThreadViewFeatureManager : NSObject @end
+
 %group UNKNWHideDMSeen
 
-// TODO: %hook the "mark thread/message seen" reporter; skip %orig when
-//       UNKNWPrefBool(kUNKNWHideDMSeenKey, NO) is YES.
+%hook IGDirectThreadViewFeatureManager
+- (void)markLastMessageAsSeen {
+    if (UNKNWPrefBool(kUNKNWHideDMSeenKey, NO)) return;
+    %orig;
+}
+%end
 
 %end
+
+// Runtime-swizzle -markLastMessageAsSeen on the Swift message-list VC (its name
+// is mangled, so %hook can't target it) to also suppress the receipt there.
+static void UNKNWSwizzleSwiftMarkSeen(void) {
+    Class cls = NSClassFromString(@"IGDirectMessageListViewController.IGDirectMessageListViewController")
+             ?: NSClassFromString(@"_TtC33IGDirectMessageListViewController33IGDirectMessageListViewController");
+    if (!cls) return;
+    SEL sel = @selector(markLastMessageAsSeen);
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return;
+    IMP orig = method_getImplementation(m);
+    IMP wrapper = imp_implementationWithBlock(^(id self_){
+        if (UNKNWPrefBool(kUNKNWHideDMSeenKey, NO)) return;
+        ((void (*)(id, SEL))orig)(self_, sel);
+    });
+    method_setImplementation(m, wrapper);
+}
 
 void UNKNWInitHideStorySeen(void) {
     %init(UNKNWHideStorySeen);
@@ -49,4 +76,5 @@ void UNKNWInitHideStorySeen(void) {
 
 void UNKNWInitHideDMSeen(void) {
     %init(UNKNWHideDMSeen);
+    UNKNWSwizzleSwiftMarkSeen();
 }
