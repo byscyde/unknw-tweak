@@ -21,18 +21,39 @@
 @interface IGVideoFeedViewController : UIViewController @end
 @interface IGChainingFeedViewController : UIViewController @end
 
+static BOOL UNKNWBoolSel(id obj, NSString *name) {
+    SEL s = NSSelectorFromString(name);
+    if (![obj respondsToSelector:s]) return NO;
+    @try { return ((BOOL (*)(id, SEL))objc_msgSend)(obj, s); } @catch (__unused id e) { return NO; }
+}
+
+static id UNKNWIdSel(id obj, NSString *name) {
+    SEL s = NSSelectorFromString(name);
+    if (![obj respondsToSelector:s]) return nil;
+    @try { return ((id (*)(id, SEL))objc_msgSend)(obj, s); } @catch (__unused id e) { return nil; }
+}
+
+// An injected sponsored unit. We key off IG's own ad flags on the item or the
+// IGMedia it wraps — isAd / isSponsored, or a non-nil adID. (isPaidPartnership
+// is a creator disclosure on an organic post, so it is deliberately NOT an ad.)
 static BOOL UNKNWIsAdObject(id obj) {
     if (!obj) return NO;
     NSString *cn = NSStringFromClass(object_getClass(obj)) ?: @"";
     if ([cn isEqualToString:@"IGAdItem"]) return YES;
     if ([cn containsString:@"SundialAds"] || [cn containsString:@"AdsVideoCell"] ||
         [cn containsString:@"MultiAdsCell"] || [cn containsString:@"AdItem"]) return YES;
-    @try {
-        SEL sp = NSSelectorFromString(@"isSponsored");
-        if ([obj respondsToSelector:sp] && ((BOOL (*)(id, SEL))objc_msgSend)(obj, sp)) return YES;
-        SEL sa = NSSelectorFromString(@"isSponsoredApp");
-        if ([obj respondsToSelector:sa] && ((BOOL (*)(id, SEL))objc_msgSend)(obj, sa)) return YES;
-    } @catch (__unused id e) {}
+    if (UNKNWBoolSel(obj, @"isAd") || UNKNWBoolSel(obj, @"isSponsored")) return YES;
+    id adid = UNKNWIdSel(obj, @"adID") ?: UNKNWIdSel(obj, @"adId");
+    if ([adid isKindOfClass:NSString.class] && [(NSString *)adid length]) return YES;
+    // Feed rows usually wrap an IGMedia; check the flags on it too.
+    for (NSString *k in @[@"media", @"feedItem", @"item"]) {
+        id m = UNKNWIdSel(obj, k);
+        if (m && m != obj) {
+            if (UNKNWBoolSel(m, @"isAd") || UNKNWBoolSel(m, @"isSponsored")) return YES;
+            id a = UNKNWIdSel(m, @"adID") ?: UNKNWIdSel(m, @"adId");
+            if ([a isKindOfClass:NSString.class] && [(NSString *)a length]) return YES;
+        }
+    }
     return NO;
 }
 

@@ -15,13 +15,16 @@
 
 @interface IGSundialViewerVideoCell : UIView
 @end
+@interface IGSundialViewerVideoSectionController : NSObject
+@end
 @interface IGProfilePictureImageView : UIImageView
 @end
 @interface IGFeedPhotoView : UIView
 @end
 
 static const void *kUNKNWDLInstalled = &kUNKNWDLInstalled;
-static NSURL *gUNKNWLastVideoURL = nil;  // most recently played video
+static NSURL *gUNKNWLastVideoURL = nil;  // most recently played AV video (fallback)
+static id gUNKNWCurrentReelMedia = nil;  // IGMedia of the most-recently-bound reel
 
 #pragma mark - toast
 
@@ -108,6 +111,118 @@ static void UNKNWSaveImage(UIImage *image) {
     [UNKNWVault.shared exportToPhotos:f albumName:@"UNKNW" completion:nil];
 }
 
+#pragma mark - reel video URL from the IGMedia model (version-robust, ObjC-only)
+
+// IG backs every reel with an IGMedia model object. Unlike the Swift playback
+// views (which are not safe to introspect), IGMedia is a plain ObjC model whose
+// generated accessors return ObjC objects — safe to call when -respondsToSelector:
+// is YES. We never use KVC / raw-ivar reads here, so there is no SIGSEGV path.
+
+static id UNKNWMsgSend(id obj, SEL sel) {
+    return ((id (*)(id, SEL))objc_msgSend)(obj, sel);
+}
+
+// Resolve the IGMedia model from whatever object a bind/responder exposes.
+static id UNKNWMediaFromObject(id obj) {
+    if (!obj) return nil;
+    if ([obj respondsToSelector:@selector(videoVersions)] ||
+        [obj respondsToSelector:@selector(progressiveDownloadUrl)]) return obj;
+    for (NSString *name in @[@"media", @"currentMedia", @"feedItem", @"item", @"object"]) {
+        SEL s = NSSelectorFromString(name);
+        if (![obj respondsToSelector:s]) continue;
+        @try {
+            id m = UNKNWMsgSend(obj, s);
+            if (m && m != obj &&
+                ([m respondsToSelector:@selector(videoVersions)] ||
+                 [m respondsToSelector:@selector(progressiveDownloadUrl)])) return m;
+        } @catch (__unused id e) {}
+    }
+    return nil;
+}
+
+static NSURL *UNKNWCoerceURL(id v) {
+    if ([v isKindOfClass:NSURL.class]) return v;
+    if ([v isKindOfClass:NSString.class] && [(NSString *)v length]) return [NSURL URLWithString:v];
+    return nil;
+}
+
+// Pull the best downloadable video URL out of an IGMedia model.
+static NSURL *UNKNWVideoURLFromMedia(id media) {
+    if (!media) return nil;
+    @try {
+        // 1) A single progressive MP4 — the simplest, no DASH assembly needed.
+        if ([media respondsToSelector:@selector(progressiveDownloadUrl)]) {
+            NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(media, @selector(progressiveDownloadUrl)));
+            if (u) return u;
+        }
+        if ([media respondsToSelector:@selector(progressiveDownloadURLString)]) {
+            NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(media, @selector(progressiveDownloadURLString)));
+            if (u) return u;
+        }
+        // 2) videoVersions — array of qualities; pick the widest.
+        if ([media respondsToSelector:@selector(videoVersions)]) {
+            id arr = UNKNWMsgSend(media, @selector(videoVersions));
+            if ([arr isKindOfClass:NSArray.class] && [arr count]) {
+                id best = nil; long bestW = -1;
+                for (id ver in (NSArray *)arr) {
+                    long w = 0;
+                    if ([ver respondsToSelector:@selector(width)])
+                        w = ((long (*)(id, SEL))objc_msgSend)(ver, @selector(width));
+                    if (w >= bestW) { bestW = w; best = ver; }
+                }
+                if (!best) best = ((NSArray *)arr).firstObject;
+                for (NSString *k in @[@"url", @"URL"]) {
+                    SEL s = NSSelectorFromString(k);
+                    if ([best respondsToSelector:s]) {
+                        NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(best, s));
+                        if (u) return u;
+                    }
+                }
+            }
+        }
+        // 3) DASH-only: log the manifest so we can add assembly later; don't crash.
+        for (NSString *k in @[@"videoDashManifest", @"dashManifest"]) {
+            SEL s = NSSelectorFromString(k);
+            if ([media respondsToSelector:s]) {
+                id m = UNKNWMsgSend(media, s);
+                if ([m isKindOfClass:NSString.class] && [(NSString *)m length]) {
+                    UNKNWDiagLog([NSString stringWithFormat:@"[dl] reel is DASH-only (%@, %lu chars)",
+                                  k, (unsigned long)[(NSString *)m length]]);
+                    break;
+                }
+            }
+        }
+    } @catch (__unused id e) {}
+    return nil;
+}
+
+// The media for the reel under the finger: prefer the live responder chain
+// (exact visible item), then the last-bound reel, then AV capture.
+static NSURL *UNKNWReelVideoURL(UIView *cell) {
+    id media = nil;
+    for (UIResponder *r = cell; r; r = r.nextResponder) {
+        @try {
+            if ([r respondsToSelector:@selector(currentMedia)]) {
+                id m = UNKNWMediaFromObject(UNKNWMsgSend(r, @selector(currentMedia)));
+                if (m) { media = m; break; }
+            }
+            if ([r respondsToSelector:@selector(currentReel)]) {
+                id m = UNKNWMediaFromObject(UNKNWMsgSend(r, @selector(currentReel)));
+                if (m) { media = m; break; }
+            }
+        } @catch (__unused id e) {}
+    }
+    if (!media) media = gUNKNWCurrentReelMedia;
+    if (media) {
+        static dispatch_once_t o; dispatch_once(&o, ^{
+            UNKNWDiagLog([NSString stringWithFormat:@"[dl] reel media class: %@",
+                          NSStringFromClass(object_getClass(media))]);
+        });
+    }
+    NSURL *u = UNKNWVideoURLFromMedia(media);
+    return u ?: gUNKNWLastVideoURL;
+}
+
 #pragma mark - gesture install
 
 static void UNKNWAddLongPress(UIView *v, SEL action) {
@@ -157,12 +272,25 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 }
 %end
 
+// IGListKit binds the reel's model here; stash it as the current reel so a
+// long-press can resolve the exact video even if the responder lookup misses.
+%hook IGSundialViewerVideoSectionController
+- (void)didUpdateToObject:(id)object {
+    %orig;
+    @try {
+        id m = UNKNWMediaFromObject(object);
+        if (m) gUNKNWCurrentReelMedia = m;
+    } @catch (__unused id e) {}
+}
+%end
+
 %hook IGSundialViewerVideoCell
 - (void)didMoveToWindow { %orig; UNKNWAddLongPress(self, @selector(unknw_save:)); }
 %new
 - (void)unknw_save:(UILongPressGestureRecognizer *)g {
     if (g.state != UIGestureRecognizerStateBegan) return;
-    NSURL *u = UNKNWVideoURLInView(self, 0) ?: gUNKNWLastVideoURL;  // safe: AVPlayerLayer / last-played only
+    // Model first (IGMedia → progressive / videoVersions), AVPlayer capture last.
+    NSURL *u = UNKNWReelVideoURL(self) ?: UNKNWVideoURLInView(self, 0);
     UNKNWSaveVideoURL(u);
 }
 %end
