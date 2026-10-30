@@ -15,10 +15,6 @@
 
 @interface IGSundialViewerVideoCell : UIView
 @end
-@interface IGSundialViewerCarouselSectionController : NSObject
-@end
-@interface IGSundialViewerPhotoSectionController : NSObject
-@end
 @interface IGProfilePictureImageView : UIImageView
 @end
 @interface IGFeedPhotoView : UIView
@@ -138,8 +134,33 @@ static void UNKNWSaveImage(UIImage *image) {
 // generated accessors return ObjC objects — safe to call when -respondsToSelector:
 // is YES. We never use KVC / raw-ivar reads here, so there is no SIGSEGV path.
 
+// Safe dynamic call. Only invokes a selector that takes NO arguments and
+// returns an OBJECT pointer, verified against the method signature first. This
+// prevents the uncatchable SIGSEGV from calling a selector whose real return
+// type is not `id` (IG's reels/story responders are Swift and expose many
+// same-named getters with scalar/struct returns). @try cannot catch that, so
+// the pre-check is the actual guard.
 static id UNKNWMsgSend(id obj, SEL sel) {
-    return ((id (*)(id, SEL))objc_msgSend)(obj, sel);
+    if (!obj || !sel || ![obj respondsToSelector:sel]) return nil;
+    NSMethodSignature *sig = nil;
+    @try { sig = [obj methodSignatureForSelector:sel]; } @catch (__unused id e) { return nil; }
+    if (!sig || sig.numberOfArguments != 2) return nil;        // self + _cmd only
+    const char *rt = sig.methodReturnType;
+    if (!rt || rt[0] != '@') return nil;                       // must return an object
+    @try { return ((id (*)(id, SEL))objc_msgSend)(obj, sel); } @catch (__unused id e) { return nil; }
+}
+
+// Safe scalar call for integer-returning getters (e.g. -width). Returns 0 if the
+// selector is absent or does not return an integer type.
+static long UNKNWIntCall(id obj, SEL sel) {
+    if (![obj respondsToSelector:sel]) return 0;
+    NSMethodSignature *sig = nil;
+    @try { sig = [obj methodSignatureForSelector:sel]; } @catch (__unused id e) { return 0; }
+    if (!sig || sig.numberOfArguments != 2) return 0;
+    char r = sig.methodReturnType[0];
+    if (r=='q'||r=='l'||r=='i'||r=='s'||r=='c'||r=='Q'||r=='L'||r=='I'||r=='S'||r=='C')
+        return ((long (*)(id, SEL))objc_msgSend)(obj, sel);
+    return 0;
 }
 
 // Is this object an IGMedia-like model (responds to media content accessors)?
@@ -192,9 +213,7 @@ static NSURL *UNKNWVideoURLFromMedia(id media) {
             if ([arr isKindOfClass:NSArray.class] && [arr count]) {
                 id best = nil; long bestW = -1;
                 for (id ver in (NSArray *)arr) {
-                    long w = 0;
-                    if ([ver respondsToSelector:@selector(width)])
-                        w = ((long (*)(id, SEL))objc_msgSend)(ver, @selector(width));
+                    long w = UNKNWIntCall(ver, @selector(width));
                     if (w >= bestW) { bestW = w; best = ver; }
                 }
                 if (!best) best = ((NSArray *)arr).firstObject;
@@ -246,9 +265,7 @@ static NSURL *UNKNWImageURLFromMedia(id media) {
             if (![node isKindOfClass:NSArray.class] || ![node count]) continue;
             id best = nil; long bestW = -1;
             for (id c in (NSArray *)node) {
-                long w = 0;
-                if ([c respondsToSelector:@selector(width)])
-                    w = ((long (*)(id, SEL))objc_msgSend)(c, @selector(width));
+                long w = UNKNWIntCall(c, @selector(width));
                 if (w >= bestW) { bestW = w; best = c; }
             }
             if (!best) best = ((NSArray *)node).firstObject;
@@ -381,20 +398,9 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 }
 %end
 
-// IGListKit binds the reel's model here; stash it as the current reel so a
-// long-press can resolve the exact media even if the responder lookup misses.
-%hook IGSundialViewerCarouselSectionController
-- (void)didUpdateToObject:(id)object {
-    %orig;
-    @try { id m = UNKNWMediaFromObject(object); if (m) gUNKNWCurrentReelMedia = m; } @catch (__unused id e) {}
-}
-%end
-%hook IGSundialViewerPhotoSectionController
-- (void)didUpdateToObject:(id)object {
-    %orig;
-    @try { id m = UNKNWMediaFromObject(object); if (m) gUNKNWCurrentReelMedia = m; } @catch (__unused id e) {}
-}
-%end
+// (The reel/story model is captured for gUNKNWCurrentReelMedia by the broad
+// didUpdateToObject: bind swizzle in UNKNWInstallBindDiagnostics below, which
+// covers every Sundial/Reel/Clips/Story section controller.)
 
 // Reel — save the playing video (model first, AVPlayer capture last).
 %hook IGSundialViewerVideoCell
@@ -424,32 +430,26 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 }
 %new
 - (void)unknw_doSave {
-    // Full-resolution profile picture: prefer the user model's HD URL, then the
-    // URL the image view loaded, then fall back to the rendered bitmap.
+    // Full-resolution profile picture: find the user model (on the view or up the
+    // responder chain) and take its HD profile-pic URL — the largest IG serves.
     NSURL *hd = nil;
-    @try {
-        if ([self respondsToSelector:@selector(user)]) {
-            id user = UNKNWMsgSend(self, @selector(user));
-            if (user) {
-                SEL hi = NSSelectorFromString(@"hdProfilePicUrlInfo");
-                if ([user respondsToSelector:hi]) {
-                    id info = UNKNWMsgSend(user, hi);
-                    for (NSString *uk in @[@"url", @"URL"]) {
-                        SEL us = NSSelectorFromString(uk);
-                        if (info && [info respondsToSelector:us]) { NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(info, us)); if (u) { hd = u; break; } }
-                    }
-                }
-                if (!hd) for (NSString *k in @[@"profilePicURL", @"profilePicUrl"]) {
-                    SEL s = NSSelectorFromString(k);
-                    if ([user respondsToSelector:s]) { NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(user, s)); if (u) { hd = u; break; } }
-                }
-            }
-        }
-        if (!hd) for (NSString *k in @[@"imageURL", @"imageUrl", @"currentURL", @"url"]) {
-            SEL s = NSSelectorFromString(k);
-            if ([self respondsToSelector:s]) { NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(self, s)); if (u) { hd = u; break; } }
-        }
-    } @catch (__unused id e) {}
+    SEL hiSel = NSSelectorFromString(@"hdProfilePicUrlInfo");
+    id user = nil;
+    for (UIResponder *r = self; r && !user; r = r.nextResponder) {
+        id u = UNKNWMsgSend(r, @selector(user));
+        if (u && [u respondsToSelector:hiSel]) user = u;
+    }
+    if (user) {
+        id info = UNKNWMsgSend(user, hiSel);
+        hd = UNKNWCoerceURL(UNKNWMsgSend(info, @selector(url)))
+          ?: UNKNWCoerceURL(UNKNWMsgSend(info, @selector(URL)));
+        if (!hd) hd = UNKNWCoerceURL(UNKNWMsgSend(user, NSSelectorFromString(@"profilePicURL")))
+                   ?: UNKNWCoerceURL(UNKNWMsgSend(user, NSSelectorFromString(@"profilePicUrl")));
+    }
+    if (!hd) for (NSString *k in @[@"imageURL", @"imageUrl", @"currentURL", @"url"]) {
+        NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(self, NSSelectorFromString(k)));
+        if (u) { hd = u; break; }
+    }
     if (hd) { UNKNWSaveVideoURL(hd); return; }  // downloadURL handles images too
     UNKNWSaveImage(UNKNWLargestImage(self, 0));
 }
@@ -503,7 +503,56 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 
 %end
 
+// Diagnostic (only with Developer Logging on): log which section controllers
+// bind which model classes for reels/story, so we can target the exact classes
+// that back the visible reel/story. Also captures the bound model as the current
+// reel media (safe — only logs class names, never introspects the object).
+static void UNKNWInstallBindDiagnostics(void) {
+    SEL sel = @selector(didUpdateToObject:);
+    unsigned int classCount = 0;
+    Class *classes = objc_copyClassList(&classCount);
+    if (!classes) return;
+    static NSMutableSet *seen; static dispatch_once_t so; dispatch_once(&so, ^{ seen = [NSMutableSet set]; });
+    for (unsigned int i = 0; i < classCount; i++) {
+        Class cls = classes[i];
+        const char *cnamec = class_getName(cls);
+        if (!cnamec) continue;
+        NSString *cname = @(cnamec);
+        if (!([cname containsString:@"Sundial"] || [cname containsString:@"Reel"] ||
+              [cname containsString:@"Clips"]   || [cname containsString:@"Story"]))
+            continue;
+        unsigned int mc = 0; Method *methods = class_copyMethodList(cls, &mc);
+        if (!methods) continue;
+        Method target = NULL;
+        for (unsigned int j = 0; j < mc; j++) if (method_getName(methods[j]) == sel) { target = methods[j]; break; }
+        free(methods);
+        if (!target) continue;
+        IMP orig = method_getImplementation(target);
+        IMP wrapper = imp_implementationWithBlock(^(id self_, id object) {
+            ((void (*)(id, SEL, id))orig)(self_, sel, object);
+            @try {
+                id m = UNKNWMediaFromObject(object);
+                if (m) gUNKNWCurrentReelMedia = m;
+                NSString *key = [NSString stringWithFormat:@"%@|%@",
+                                 NSStringFromClass(object_getClass(self_)),
+                                 object ? NSStringFromClass(object_getClass(object)) : @"nil"];
+                @synchronized (seen) {
+                    if (![seen containsObject:key]) {
+                        [seen addObject:key];
+                        UNKNWDiagLog([NSString stringWithFormat:@"[bind] %@ <- %@%@", key,
+                                      m ? @"media:" : @"", m ? NSStringFromClass(object_getClass(m)) : @""]);
+                    }
+                }
+            } @catch (__unused id e) {}
+        });
+        method_setImplementation(target, wrapper);
+    }
+    free(classes);
+    UNKNWDiagLog(@"[bind] diagnostics installed");
+}
+
 void UNKNWInitMediaDownloader(void) {
     %init(UNKNWMediaDownloader);
+    UNKNWInstallBindDiagnostics();
     UNKNWLog(@"media downloader installed (player-capture + image-grab)");
 }
