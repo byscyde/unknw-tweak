@@ -226,19 +226,16 @@ static NSURL *UNKNWVideoURLFromMedia(id media) {
                 }
             }
         }
-        // 3) DASH-only: log the manifest so we can add assembly later; don't crash.
-        for (NSString *k in @[@"videoDashManifest", @"dashManifest"]) {
-            SEL s = NSSelectorFromString(k);
-            if ([media respondsToSelector:s]) {
-                id m = UNKNWMsgSend(media, s);
-                if ([m isKindOfClass:NSString.class] && [(NSString *)m length]) {
-                    UNKNWDiagLog([NSString stringWithFormat:@"[dl] reel is DASH-only (%@, %lu chars)",
-                                  k, (unsigned long)[(NSString *)m length]]);
-                    break;
-                }
-            }
-        }
     } @catch (__unused id e) {}
+    return nil;  // likely DASH-only — the caller falls back to UNKNWDashManifest
+}
+
+// The DASH manifest (MPD XML) string for a media, if it streams via DASH.
+static NSString *UNKNWDashManifest(id media) {
+    for (NSString *k in @[@"videoDashManifest", @"dashManifest"]) {
+        id m = UNKNWMsgSend(media, NSSelectorFromString(k));
+        if ([m isKindOfClass:NSString.class] && [(NSString *)m length]) return m;
+    }
     return nil;
 }
 
@@ -307,10 +304,122 @@ static id UNKNWCurrentMediaForView(UIView *view) {
     return media;
 }
 
-// Video URL for the reel under the finger (model first, AV capture last).
-static NSURL *UNKNWReelVideoURL(UIView *cell) {
-    NSURL *u = UNKNWVideoURLFromMedia(UNKNWCurrentMediaForView(cell));
-    return u ?: gUNKNWLastVideoURL;
+#pragma mark - DASH (reels & stories stream as MPEG-DASH, not progressive)
+
+static NSString *UNKNWXMLDecode(NSString *s) {
+    return [[[s stringByReplacingOccurrencesOfString:@"&amp;" withString:@"&"]
+                stringByReplacingOccurrencesOfString:@"&#38;" withString:@"&"]
+                stringByReplacingOccurrencesOfString:@"&quot;" withString:@"\""];
+}
+
+static NSString *UNKNWRegex1(NSString *pattern, NSString *text, NSRegularExpressionOptions opts) {
+    NSError *e = nil;
+    NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:pattern options:opts error:&e];
+    if (!re) return nil;
+    NSTextCheckingResult *m = [re firstMatchInString:text options:0 range:NSMakeRange(0, text.length)];
+    if (!m || m.numberOfRanges < 2) return nil;
+    return [text substringWithRange:[m rangeAtIndex:1]];
+}
+
+// Highest-bandwidth <BaseURL> from the video or audio AdaptationSet of an MPD.
+static NSString *UNKNWBestRepURL(NSString *mpd, BOOL wantVideo) {
+    NSError *e = nil;
+    NSString *asPat = [NSString stringWithFormat:@"<AdaptationSet[^>]*(?:mimeType|contentType)=\"%@[^\"]*\"[^>]*>(.*?)</AdaptationSet>",
+                       wantVideo ? @"video" : @"audio"];
+    NSRegularExpression *asRe = [NSRegularExpression regularExpressionWithPattern:asPat
+                                 options:NSRegularExpressionDotMatchesLineSeparators error:&e];
+    if (!asRe) return nil;
+    NSRegularExpression *repRe = [NSRegularExpression regularExpressionWithPattern:@"<Representation([^>]*)>(.*?)</Representation>"
+                                  options:NSRegularExpressionDotMatchesLineSeparators error:&e];
+    NSString *bestURL = nil; long long bestBW = -1;
+    for (NSTextCheckingResult *as in [asRe matchesInString:mpd options:0 range:NSMakeRange(0, mpd.length)]) {
+        NSString *body = [mpd substringWithRange:[as rangeAtIndex:1]];
+        for (NSTextCheckingResult *rep in [repRe matchesInString:body options:0 range:NSMakeRange(0, body.length)]) {
+            NSString *attrs = [body substringWithRange:[rep rangeAtIndex:1]];
+            NSString *rbody = [body substringWithRange:[rep rangeAtIndex:2]];
+            NSString *base = UNKNWRegex1(@"<BaseURL>([^<]+)</BaseURL>", rbody, 0);
+            if (!base.length) continue;
+            NSString *bwStr = UNKNWRegex1(@"bandwidth=\"(\\d+)\"", attrs, 0);
+            long long bw = bwStr ? bwStr.longLongValue : 0;
+            if (bw >= bestBW) { bestBW = bw; bestURL = base; }
+        }
+    }
+    return bestURL.length ? UNKNWXMLDecode(bestURL) : nil;
+}
+
+static void UNKNWSaveLocalVideo(NSURL *fileURL) {
+    if (!fileURL) { UNKNWToast(@"Download failed"); return; }
+    if ((NSInteger)UNKNWPrefNumber(kUNKNWMediaDestKey, 1) == 1) {
+        [UNKNWVault.shared exportToPhotos:fileURL albumName:@"UNKNW" completion:^(BOOL ok, NSError *e){
+            UNKNWToast(ok ? @"Saved ✓" : @"Save failed");
+        }];
+    } else {
+        NSData *d = [NSData dataWithContentsOfURL:fileURL];
+        NSURL *v = d ? [UNKNWVault.shared saveData:d suggestedName:@"reel.mp4" error:nil] : nil;
+        UNKNWToast(v ? @"Saved ✓" : @"Save failed");
+    }
+}
+
+// Download one URL to a temp file.
+static void UNKNWFetchToTemp(NSString *urlStr, NSString *ext, void (^done)(NSURL *file)) {
+    NSURL *url = [NSURL URLWithString:urlStr];
+    if (!url) { done(nil); return; }
+    NSURLSessionDownloadTask *t = [NSURLSession.sharedSession downloadTaskWithURL:url
+        completionHandler:^(NSURL *loc, NSURLResponse *resp, NSError *err){
+            if (!loc || err) { done(nil); return; }
+            NSURL *dst = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
+                          URLByAppendingPathComponent:[NSString stringWithFormat:@"unknw-%@.%@", NSUUID.UUID.UUIDString, ext]];
+            [NSFileManager.defaultManager removeItemAtURL:dst error:nil];
+            NSError *mv = nil;
+            [NSFileManager.defaultManager moveItemAtURL:loc toURL:dst error:&mv];
+            done(mv ? nil : dst);
+        }];
+    [t resume];
+}
+
+// Mux a video-only file and an audio-only file into one MP4.
+static void UNKNWMux(NSURL *videoFile, NSURL *audioFile, void (^done)(NSURL *out)) {
+    AVMutableComposition *comp = [AVMutableComposition composition];
+    @try {
+        AVURLAsset *va = [AVURLAsset assetWithURL:videoFile];
+        AVAssetTrack *vt = [va tracksWithMediaType:AVMediaTypeVideo].firstObject;
+        if (!vt) { done(nil); return; }
+        AVMutableCompositionTrack *cvt = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
+        [cvt insertTimeRange:CMTimeRangeMake(kCMTimeZero, va.duration) ofTrack:vt atTime:kCMTimeZero error:nil];
+        cvt.preferredTransform = vt.preferredTransform;
+        if (audioFile) {
+            AVURLAsset *aa = [AVURLAsset assetWithURL:audioFile];
+            AVAssetTrack *at = [aa tracksWithMediaType:AVMediaTypeAudio].firstObject;
+            if (at) {
+                AVMutableCompositionTrack *cat = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+                [cat insertTimeRange:CMTimeRangeMake(kCMTimeZero, va.duration) ofTrack:at atTime:kCMTimeZero error:nil];
+            }
+        }
+    } @catch (__unused id e) { done(nil); return; }
+    NSURL *out = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
+                  URLByAppendingPathComponent:[NSString stringWithFormat:@"unknw-%@.mp4", NSUUID.UUID.UUIDString]];
+    AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetPassthrough];
+    ex.outputURL = out; ex.outputFileType = AVFileTypeMPEG4; ex.shouldOptimizeForNetworkUse = YES;
+    [ex exportAsynchronouslyWithCompletionHandler:^{
+        done(ex.status == AVAssetExportSessionStatusCompleted ? out : nil);
+    }];
+}
+
+// Parse the MPD, download the best video (+audio), mux, and save.
+static void UNKNWDownloadDASH(NSString *mpd) {
+    NSString *vurl = UNKNWBestRepURL(mpd, YES);
+    NSString *aurl = UNKNWBestRepURL(mpd, NO);
+    if (!vurl) { UNKNWToast(@"No video playing"); return; }
+    UNKNWToast(@"Downloading…");
+    UNKNWFetchToTemp(vurl, @"mp4", ^(NSURL *vfile){
+        if (!vfile) { UNKNWToast(@"Download failed"); return; }
+        if (!aurl) { UNKNWSaveLocalVideo(vfile); return; }
+        UNKNWFetchToTemp(aurl, @"m4a", ^(NSURL *afile){
+            UNKNWMux(vfile, afile, ^(NSURL *out){
+                UNKNWSaveLocalVideo(out ?: vfile);  // fall back to video-only on mux failure
+            });
+        });
+    });
 }
 
 #pragma mark - gesture install
@@ -410,8 +519,12 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 }
 %new
 - (void)unknw_doSave {
-    NSURL *u = UNKNWReelVideoURL(self) ?: UNKNWVideoURLInView(self, 0);
-    UNKNWSaveVideoURL(u);
+    id media = UNKNWCurrentMediaForView(self);
+    NSURL *u = UNKNWVideoURLFromMedia(media);
+    if (u) { UNKNWSaveVideoURL(u); return; }                 // progressive / versioned
+    NSString *mpd = UNKNWDashManifest(media);
+    if (mpd.length) { UNKNWDownloadDASH(mpd); return; }       // DASH (reels default)
+    UNKNWSaveVideoURL(UNKNWVideoURLInView(self, 0) ?: gUNKNWLastVideoURL);
 }
 %new
 - (void)unknw_save:(UILongPressGestureRecognizer *)g {
@@ -487,10 +600,13 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 %new
 - (void)unknw_doSave {
     id media = UNKNWCurrentMediaForView(self);
-    NSURL *v = UNKNWVideoURLFromMedia(media) ?: gUNKNWLastVideoURL;
+    NSURL *v = UNKNWVideoURLFromMedia(media);
     if (v) { UNKNWSaveVideoURL(v); return; }
+    NSString *mpd = UNKNWDashManifest(media);
+    if (mpd.length) { UNKNWDownloadDASH(mpd); return; }       // story video (DASH)
     NSURL *img = UNKNWImageURLFromMedia(media);
-    if (img) { UNKNWSaveVideoURL(img); return; }  // downloadURL handles images too
+    if (img) { UNKNWSaveVideoURL(img); return; }              // story photo (downloadURL handles images)
+    if (gUNKNWLastVideoURL) { UNKNWSaveVideoURL(gUNKNWLastVideoURL); return; }
     UNKNWSaveImage(UNKNWLargestImage(self, 0));
 }
 %new
