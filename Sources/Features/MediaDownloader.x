@@ -171,22 +171,24 @@ static BOOL UNKNWIsMediaModel(id o) {
                  [o respondsToSelector:NSSelectorFromString(@"displayURL")]);
 }
 
-// Resolve the IGMedia model from whatever object a bind/responder exposes
-// (the object itself, or a reel/section-controller/view-model that wraps it).
-static id UNKNWMediaFromObject(id obj) {
-    if (!obj) return nil;
+// Resolve the IGMedia model from whatever object a bind/responder exposes.
+// Recurses up to 2 levels so chains like
+// IGStoryViewerViewModel → currentReel (IGReel) → reelMedia (IGMedia) resolve.
+static id UNKNWMediaFromObjectDepth(id obj, int depth) {
+    if (!obj || depth > 2) return nil;
     if (UNKNWIsMediaModel(obj)) return obj;
     for (NSString *name in @[@"media", @"currentMedia", @"reelMedia", @"currentItem",
-                             @"feedItem", @"item", @"object", @"post", @"activeMedia", @"focusedMedia"]) {
-        SEL s = NSSelectorFromString(name);
-        if (![obj respondsToSelector:s]) continue;
-        @try {
-            id m = UNKNWMsgSend(obj, s);
-            if (m && m != obj && UNKNWIsMediaModel(m)) return m;
-        } @catch (__unused id e) {}
+                             @"currentReel", @"reel", @"feedItem", @"item", @"object",
+                             @"post", @"activeMedia", @"focusedMedia"]) {
+        id m = UNKNWMsgSend(obj, NSSelectorFromString(name));
+        if (!m || m == obj) continue;
+        if (UNKNWIsMediaModel(m)) return m;
+        id deeper = UNKNWMediaFromObjectDepth(m, depth + 1);
+        if (deeper) return deeper;
     }
     return nil;
 }
+static id UNKNWMediaFromObject(id obj) { return UNKNWMediaFromObjectDepth(obj, 0); }
 
 static NSURL *UNKNWCoerceURL(id v) {
     if ([v isKindOfClass:NSURL.class]) return v;
@@ -349,29 +351,37 @@ static NSString *UNKNWBestRepURL(NSString *mpd, BOOL wantVideo) {
 
 static void UNKNWSaveLocalVideo(NSURL *fileURL) {
     if (!fileURL) { UNKNWToast(@"Download failed"); return; }
+    unsigned long long sz = [[NSFileManager.defaultManager attributesOfItemAtPath:fileURL.path error:nil] fileSize];
     if ((NSInteger)UNKNWPrefNumber(kUNKNWMediaDestKey, 1) == 1) {
         [UNKNWVault.shared exportToPhotos:fileURL albumName:@"UNKNW" completion:^(BOOL ok, NSError *e){
-            UNKNWToast(ok ? @"Saved ✓" : @"Save failed");
+            UNKNWDiagLog([NSString stringWithFormat:@"[dl] photos export ok=%d %lluKB err=%@", ok, sz/1024, e.localizedDescription ?: @"-"]);
+            UNKNWToast(ok ? @"Saved to Photos ✓" : @"Save failed");
         }];
     } else {
         NSData *d = [NSData dataWithContentsOfURL:fileURL];
         NSURL *v = d ? [UNKNWVault.shared saveData:d suggestedName:@"reel.mp4" error:nil] : nil;
-        UNKNWToast(v ? @"Saved ✓" : @"Save failed");
+        UNKNWToast(v ? @"Saved to Vault ✓" : @"Save failed");
     }
 }
 
 // Download one URL to a temp file.
-static void UNKNWFetchToTemp(NSString *urlStr, NSString *ext, void (^done)(NSURL *file)) {
+static void UNKNWFetchToTemp(NSString *urlStr, NSString *ext, NSString *tag, void (^done)(NSURL *file)) {
     NSURL *url = [NSURL URLWithString:urlStr];
-    if (!url) { done(nil); return; }
+    if (!url) { UNKNWDiagLog([NSString stringWithFormat:@"[dl] %@: bad url", tag]); done(nil); return; }
     NSURLSessionDownloadTask *t = [NSURLSession.sharedSession downloadTaskWithURL:url
         completionHandler:^(NSURL *loc, NSURLResponse *resp, NSError *err){
-            if (!loc || err) { done(nil); return; }
+            long http = [resp isKindOfClass:NSHTTPURLResponse.class] ? (long)((NSHTTPURLResponse *)resp).statusCode : 0;
+            if (!loc || err) {
+                UNKNWDiagLog([NSString stringWithFormat:@"[dl] %@: fail http=%ld err=%@", tag, http, err.localizedDescription ?: @"?"]);
+                done(nil); return;
+            }
             NSURL *dst = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
                           URLByAppendingPathComponent:[NSString stringWithFormat:@"unknw-%@.%@", NSUUID.UUID.UUIDString, ext]];
             [NSFileManager.defaultManager removeItemAtURL:dst error:nil];
             NSError *mv = nil;
             [NSFileManager.defaultManager moveItemAtURL:loc toURL:dst error:&mv];
+            unsigned long long sz = [[NSFileManager.defaultManager attributesOfItemAtPath:dst.path error:nil] fileSize];
+            UNKNWDiagLog([NSString stringWithFormat:@"[dl] %@: http=%ld %lluKB%@", tag, http, sz/1024, mv ? @" MOVE-FAIL" : @""]);
             done(mv ? nil : dst);
         }];
     [t resume];
@@ -401,6 +411,8 @@ static void UNKNWMux(NSURL *videoFile, NSURL *audioFile, void (^done)(NSURL *out
     AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetPassthrough];
     ex.outputURL = out; ex.outputFileType = AVFileTypeMPEG4; ex.shouldOptimizeForNetworkUse = YES;
     [ex exportAsynchronouslyWithCompletionHandler:^{
+        UNKNWDiagLog([NSString stringWithFormat:@"[dl] mux status=%ld err=%@",
+                      (long)ex.status, ex.error.localizedDescription ?: @"-"]);
         done(ex.status == AVAssetExportSessionStatusCompleted ? out : nil);
     }];
 }
@@ -409,12 +421,13 @@ static void UNKNWMux(NSURL *videoFile, NSURL *audioFile, void (^done)(NSURL *out
 static void UNKNWDownloadDASH(NSString *mpd) {
     NSString *vurl = UNKNWBestRepURL(mpd, YES);
     NSString *aurl = UNKNWBestRepURL(mpd, NO);
+    UNKNWDiagLog([NSString stringWithFormat:@"[dl] dash v=%@ a=%@", vurl ? @"yes" : @"no", aurl ? @"yes" : @"no"]);
     if (!vurl) { UNKNWToast(@"No video playing"); return; }
     UNKNWToast(@"Downloading…");
-    UNKNWFetchToTemp(vurl, @"mp4", ^(NSURL *vfile){
+    UNKNWFetchToTemp(vurl, @"mp4", @"video", ^(NSURL *vfile){
         if (!vfile) { UNKNWToast(@"Download failed"); return; }
         if (!aurl) { UNKNWSaveLocalVideo(vfile); return; }
-        UNKNWFetchToTemp(aurl, @"m4a", ^(NSURL *afile){
+        UNKNWFetchToTemp(aurl, @"m4a", @"audio", ^(NSURL *afile){
             UNKNWMux(vfile, afile, ^(NSURL *out){
                 UNKNWSaveLocalVideo(out ?: vfile);  // fall back to video-only on mux failure
             });
@@ -543,21 +556,30 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 }
 %new
 - (void)unknw_doSave {
-    // Full-resolution profile picture: find the user model (on the view or up the
+    // Full-resolution profile picture: find the IGUser (on the view or up the
     // responder chain) and take its HD profile-pic URL — the largest IG serves.
     NSURL *hd = nil;
     SEL hiSel = NSSelectorFromString(@"hdProfilePicUrlInfo");
+    SEL hdSel = NSSelectorFromString(@"hdProfilePicURL");
     id user = nil;
     for (UIResponder *r = self; r && !user; r = r.nextResponder) {
-        id u = UNKNWMsgSend(r, @selector(user));
-        if (u && [u respondsToSelector:hiSel]) user = u;
+        for (NSString *uk in @[@"user", @"displayedUser", @"profileUser", @"currentUser", @"account"]) {
+            id u = UNKNWMsgSend(r, NSSelectorFromString(uk));
+            if (u && ([u respondsToSelector:hiSel] || [u respondsToSelector:hdSel])) { user = u; break; }
+        }
     }
     if (user) {
-        id info = UNKNWMsgSend(user, hiSel);
-        hd = UNKNWCoerceURL(UNKNWMsgSend(info, @selector(url)))
-          ?: UNKNWCoerceURL(UNKNWMsgSend(info, @selector(URL)));
-        if (!hd) hd = UNKNWCoerceURL(UNKNWMsgSend(user, NSSelectorFromString(@"profilePicURL")))
-                   ?: UNKNWCoerceURL(UNKNWMsgSend(user, NSSelectorFromString(@"profilePicUrl")));
+        hd = UNKNWCoerceURL(UNKNWMsgSend(user, hdSel));
+        if (!hd) {
+            id info = UNKNWMsgSend(user, hiSel);
+            hd = UNKNWCoerceURL(UNKNWMsgSend(info, @selector(url)))
+              ?: UNKNWCoerceURL(UNKNWMsgSend(info, @selector(URL)));
+        }
+        if (!hd) hd = UNKNWCoerceURL(UNKNWMsgSend(user, NSSelectorFromString(@"profilePicURL")));
+        UNKNWDiagLog([NSString stringWithFormat:@"[dl] profile user=%@ hd=%@",
+                      NSStringFromClass(object_getClass(user)), hd ? @"yes" : @"no"]);
+    } else {
+        UNKNWDiagLog(@"[dl] profile: no user in responder chain");
     }
     if (!hd) for (NSString *k in @[@"imageURL", @"imageUrl", @"currentURL", @"url"]) {
         NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(self, NSSelectorFromString(k)));
