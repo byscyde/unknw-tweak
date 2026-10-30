@@ -3,8 +3,97 @@
 #import "UNKNWSettingsController.h"
 #import "Core/UNKNWLicense.h"
 #import <objc/runtime.h>
+#import <QuartzCore/QuartzCore.h>
 
 static const void *kFeatureKey = &kFeatureKey;
+
+#pragma mark - Theme
+
+// UNKNW's signature accent (violet) and a distinct colour per category so the
+// menu reads like a bespoke app rather than a plain settings list.
+static UIColor *UNKNWAccent(void) {
+    return [UIColor colorWithRed:0.42 green:0.29 blue:0.98 alpha:1.0];
+}
+
+static UIColor *UNKNWCategoryColor(NSString *category) {
+    static NSDictionary<NSString *, UIColor *> *colors = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        colors = @{
+            @"Feed":             [UIColor colorWithRed:0.20 green:0.60 blue:0.98 alpha:1],
+            @"Reels":            [UIColor colorWithRed:0.65 green:0.30 blue:0.98 alpha:1],
+            @"Stories":          [UIColor colorWithRed:0.98 green:0.45 blue:0.30 alpha:1],
+            @"Messages":         [UIColor colorWithRed:0.18 green:0.78 blue:0.55 alpha:1],
+            @"Profile":          [UIColor colorWithRed:0.98 green:0.35 blue:0.55 alpha:1],
+            @"Download Manager": [UIColor colorWithRed:0.30 green:0.52 blue:0.98 alpha:1],
+            @"General":          [UIColor colorWithRed:0.55 green:0.57 blue:0.62 alpha:1],
+        };
+    });
+    return colors[category] ?: UNKNWAccent();
+}
+
+// A rounded, filled "app icon" chip with a white SF Symbol — the iOS-Settings
+// look, rendered once into an image so the table never tints it.
+static UIImage *UNKNWIconChip(NSString *symbol, UIColor *bg) {
+    CGSize size = CGSizeMake(29, 29);
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:size];
+    UIImage *out = [r imageWithActions:^(UIGraphicsImageRendererContext *__unused ctx) {
+        UIBezierPath *p = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, size.width, size.height) cornerRadius:7];
+        [bg setFill];
+        [p fill];
+        UIImageSymbolConfiguration *cfg =
+            [UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightSemibold];
+        UIImage *s = [[UIImage systemImageNamed:symbol withConfiguration:cfg]
+                      imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+        CGSize ss = s.size;
+        [s drawInRect:CGRectMake((size.width - ss.width) / 2.0, (size.height - ss.height) / 2.0, ss.width, ss.height)];
+    }];
+    return [out imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+}
+
+#pragma mark - Branded header
+
+@interface UNKNWHeaderView : UIView
+@end
+
+@implementation UNKNWHeaderView {
+    CAGradientLayer *_grad;
+}
+- (instancetype)initWithFrame:(CGRect)frame {
+    if ((self = [super initWithFrame:frame])) {
+        _grad = [CAGradientLayer layer];
+        _grad.colors = @[(id)[UIColor colorWithRed:0.42 green:0.29 blue:0.98 alpha:1].CGColor,
+                         (id)[UIColor colorWithRed:0.86 green:0.24 blue:0.56 alpha:1].CGColor];
+        _grad.startPoint = CGPointMake(0, 0);
+        _grad.endPoint = CGPointMake(1, 1);
+        _grad.cornerRadius = 18;
+        [self.layer addSublayer:_grad];
+
+        UILabel *title = [UILabel new];
+        title.text = @"UNKNW";
+        title.font = [UIFont systemFontOfSize:34 weight:UIFontWeightHeavy];
+        title.textColor = UIColor.whiteColor;
+        UILabel *sub = [UILabel new];
+        sub.text = [NSString stringWithFormat:@"Instagram, your way · v%@", UNKNW_VERSION];
+        sub.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        sub.textColor = [UIColor colorWithWhite:1 alpha:0.85];
+        UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[title, sub]];
+        stack.axis = UILayoutConstraintAxisVertical;
+        stack.spacing = 2;
+        stack.translatesAutoresizingMaskIntoConstraints = NO;
+        [self addSubview:stack];
+        [NSLayoutConstraint activateConstraints:@[
+            [stack.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:36],
+            [stack.centerYAnchor constraintEqualToAnchor:self.centerYAnchor constant:-2],
+        ]];
+    }
+    return self;
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    _grad.frame = CGRectInset(self.bounds, 16, 12);
+}
+@end
 
 #pragma mark - Category sub-screen
 
@@ -58,10 +147,13 @@ static const void *kFeatureKey = &kFeatureKey;
     UNKNWFeature *feature = [self featureAt:indexPath];
     cell.textLabel.text = feature.title;
     cell.detailTextLabel.text = feature.detail;
+    cell.imageView.image = [UIImage systemImageNamed:UNKNWFeatureIcon(feature.key)];
+    cell.imageView.tintColor = UNKNWCategoryColor(_category);
 
     switch (feature.kind) {
         case UNKNWFeatureKindToggle: {
             UISwitch *toggle = [UISwitch new];
+            toggle.onTintColor = UNKNWAccent();
             toggle.on = UNKNWPrefBool(feature.key, feature.defaultBool);
             objc_setAssociatedObject(toggle, kFeatureKey, feature, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             [toggle addTarget:self action:@selector(toggleChanged:) forControlEvents:UIControlEventValueChanged];
@@ -200,9 +292,13 @@ static const void *kFeatureKey = &kFeatureKey;
     [super viewDidLoad];
     self.title = @"UNKNW";
     self.navigationController.navigationBar.prefersLargeTitles = YES;
+    self.navigationController.navigationBar.tintColor = UNKNWAccent();
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
                                                       target:self action:@selector(dismissSelf)];
+    UNKNWHeaderView *header =
+        [[UNKNWHeaderView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 150)];
+    self.tableView.tableHeaderView = header;
 }
 
 - (void)dismissSelf { [self dismissViewControllerAnimated:YES completion:nil]; }
@@ -229,7 +325,9 @@ static const void *kFeatureKey = &kFeatureKey;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         cell.textLabel.text = @"Enable UNKNW";
         cell.detailTextLabel.text = @"Master switch for all features";
+        cell.imageView.image = UNKNWIconChip(@"bolt.fill", UNKNWAccent());
         UISwitch *toggle = [UISwitch new];
+        toggle.onTintColor = UNKNWAccent();
         toggle.on = UNKNWPrefBool(kUNKNWEnabledKey, YES);
         [toggle addTarget:self action:@selector(masterChanged:) forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = toggle;
@@ -239,25 +337,23 @@ static const void *kFeatureKey = &kFeatureKey;
         UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
         NSString *category = _categories[indexPath.row];
         cell.textLabel.text = category;
-        cell.imageView.image = [UIImage systemImageNamed:UNKNWCategoryIcon(category)];
-        cell.imageView.tintColor = [UIColor labelColor];
+        cell.imageView.image = UNKNWIconChip(UNKNWCategoryIcon(category), UNKNWCategoryColor(category));
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         return cell;
     }
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-    cell.imageView.tintColor = [UIColor labelColor];
     if (indexPath.row == 0) {
         NSString *stored = UNKNWLicense.shared.key;
         BOOL activated = UNKNWLicense.shared.isActivated;
         cell.textLabel.text = @"Account & License";
         cell.detailTextLabel.text = activated ? @"Activated · tap to manage"
             : (stored.length ? @"Not activated · tap to retry" : @"Tap to enter your license key");
-        cell.imageView.image = [UIImage systemImageNamed:(activated ? @"checkmark.seal" : @"lock")];
+        cell.imageView.image = UNKNWIconChip(activated ? @"checkmark.seal.fill" : @"lock.fill", UNKNWAccent());
     } else {
         cell.textLabel.text = @"Diagnostics";
         cell.detailTextLabel.text = @"View / share the class log (for hook discovery)";
-        cell.imageView.image = [UIImage systemImageNamed:@"ladybug"];
+        cell.imageView.image = UNKNWIconChip(@"ladybug.fill", [UIColor colorWithRed:0.55 green:0.57 blue:0.62 alpha:1]);
     }
     return cell;
 }
@@ -376,3 +472,29 @@ shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other 
 }
 
 @end
+
+#pragma mark - What's New (one-time per version)
+
+void UNKNWMaybeShowWhatsNew(void) {
+    NSString *seen = UNKNWPrefString(kUNKNWLastSeenVersionKey, @"");
+    if ([seen isEqualToString:UNKNW_VERSION]) return;  // already shown for this version
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIViewController *top = [[UNKNWGestureHandler shared] topViewController];
+        if (!top || top.presentedViewController) return;  // retry next launch if the UI isn't ready
+        UNKNWPrefSetString(kUNKNWLastSeenVersionKey, UNKNW_VERSION);
+        NSString *body =
+            @"• Reels video download — hold a reel or tap the save button\n"
+            @"• Posts & profile pictures save in full resolution\n"
+            @"• A floating save button (switch it to hold-only or off in Download Manager)\n"
+            @"• Ads removed from the feed and from reels\n"
+            @"• Hide your story-seen receipts\n"
+            @"• A freshly redesigned panel\n\n"
+            @"Open UNKNW any time with a two-finger long-press, or a long-press in the bottom-left corner.";
+        UIAlertController *a =
+            [UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"What's New in UNKNW %@", UNKNW_VERSION]
+                                                message:body
+                                         preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"Let's go" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:a animated:YES completion:nil];
+    });
+}

@@ -44,6 +44,7 @@
 #define kUNKNWMediaDMKey            @"UNKNW.mediaDMDownload"
 #define kUNKNWMediaDestKey          @"UNKNW.mediaDest"      // 0 = Vault, 1 = Photos
 #define kUNKNWMediaAlbumKey         @"UNKNW.mediaAlbum"     // 0 = UNKNW, 1 = Instagram, 2 = Camera Roll
+#define kUNKNWDownloadUIModeKey     @"UNKNW.downloadUIMode" // 0 = button + long-press, 1 = long-press only, 2 = off
 
 // Privacy
 #define kUNKNWHideStorySeenKey      @"UNKNW.hideStorySeen"
@@ -70,6 +71,10 @@
 
 // Developer
 #define kUNKNWDebugLoggingKey       @"UNKNW.debugLogging"
+
+// Version / What's New
+#define UNKNW_VERSION               @"1.0"
+#define kUNKNWLastSeenVersionKey    @"UNKNW.lastSeenVersion"
 
 #pragma mark - Logging
 
@@ -99,6 +104,7 @@ void     UNKNWPrefSetString(NSString *key, NSString *value);
 // value with no hooks.
 extern void UNKNWDiagLog(NSString *line);
 extern void UNKNWInstallCrashLogger(void);
+extern void UNKNWMaybeShowWhatsNew(void);  // one-time changelog popup after an update
 extern void UNKNWInitIntegrityBypass(void);
 extern void UNKNWInstallKeychainFix(void);
 extern void UNKNWInitBetaBypass(void);

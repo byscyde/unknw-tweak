@@ -140,8 +140,11 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
 
             // ===== Download Manager =====
             [UNKNWFeature toggle:kUNKNWMediaDownloaderKey category:cDownload section:@""
-                           title:@"Media Downloader" detail:@"Long-press a reel or profile picture to save it (more surfaces soon)"
+                           title:@"Media Downloader" detail:@"Save reels (video), posts and profile pictures"
                        defaultOn:YES init:UNKNWInitMediaDownloader],
+            [UNKNWFeature segment:kUNKNWDownloadUIModeKey category:cDownload section:@""
+                            title:@"Save control" detail:@"How to trigger a download on media"
+                          options:@[@"Button + hold", @"Hold only", @"Off"] defaultIndex:0],
             [UNKNWFeature toggle:kUNKNWMediaDMKey category:cDownload section:@""
                            title:@"Allow DM media" detail:@"Include media received in direct messages"
                        defaultOn:NO init:NULL],
@@ -167,6 +170,10 @@ NSArray<NSString *> *UNKNWCategories(void) {
     dispatch_once(&once, ^{
         NSMutableArray *ordered = [NSMutableArray array];
         for (UNKNWFeature *f in UNKNWAllFeatures()) {
+            // "App Fixes" are always-on sideload enablers — they still load from
+            // the registry in Tweak.x, but we hide the category from the panel so
+            // the user never sees (or accidentally disables) them.
+            if ([f.category isEqualToString:@"App Fixes"]) continue;
             if (![ordered containsObject:f.category]) [ordered addObject:f.category];
         }
         categories = [ordered copy];
@@ -190,6 +197,43 @@ NSString *UNKNWCategoryIcon(NSString *category) {
         };
     });
     return icons[category] ?: @"square.grid.2x2";
+}
+
+NSString *UNKNWFeatureIcon(NSString *key) {
+    static NSDictionary *icons = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        icons = @{
+            kUNKNWHideAdsKey:             @"nosign",
+            kUNKNWFeedDisableAutoplayKey: @"pause.rectangle",
+            kUNKNWConfirmLikeKey:         @"heart.circle",
+            kUNKNWDetailedDatesKey:       @"calendar",
+            kUNKNWCopyTextKey:            @"doc.on.doc",
+            kUNKNWHideCommentsPreviewKey: @"text.bubble",
+            kUNKNWReelsAutoAdvanceKey:    @"forward.end",
+            kUNKNWReelsLimitOnKey:        @"timer",
+            kUNKNWReelsLimitCountKey:     @"number",
+            kUNKNWStoriesArchiveKey:      @"archivebox",
+            kUNKNWStoriesAutoDLKey:       @"arrow.down.doc",
+            kUNKNWHideStorySeenKey:       @"eye.slash",
+            kUNKNWHideTypingKey:          @"ellipsis.bubble",
+            kUNKNWHideDMSeenKey:          @"envelope.open",
+            kUNKNWManualSeenKey:          @"hand.tap",
+            kUNKNWKeepUnsentKey:          @"tray.full",
+            kUNKNWDownloadAudioKey:       @"waveform",
+            kUNKNWSendAudioFileKey:       @"mic",
+            kUNKNWConfirmCallsKey:        @"phone.circle",
+            kUNKNWProfileAnalyzerKey:     @"chart.bar",
+            kUNKNWConfirmFollowKey:       @"person.badge.plus",
+            kUNKNWMediaDownloaderKey:     @"arrow.down.circle",
+            kUNKNWDownloadUIModeKey:      @"hand.point.up.left",
+            kUNKNWMediaDMKey:             @"paperclip",
+            kUNKNWMediaDestKey:           @"folder",
+            kUNKNWMediaAlbumKey:          @"photo.on.rectangle",
+            kUNKNWDebugLoggingKey:        @"terminal",
+        };
+    });
+    return icons[key] ?: @"circle";
 }
 
 NSArray<NSString *> *UNKNWSectionsInCategory(NSString *category) {

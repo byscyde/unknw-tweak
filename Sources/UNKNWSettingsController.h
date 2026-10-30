@@ -13,4 +13,5 @@
 + (instancetype)shared;
 - (void)handleGesture:(UIGestureRecognizer *)gesture;
 - (void)presentSettings;
+- (UIViewController *)topViewController;
 @end

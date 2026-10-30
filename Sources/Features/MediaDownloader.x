@@ -21,10 +21,24 @@
 @end
 @interface IGFeedPhotoView : UIView
 @end
+@interface IGStoryViewerCell : UIView
+@end
 
-static const void *kUNKNWDLInstalled = &kUNKNWDLInstalled;
+// Declares the %new save selectors so cross-calls like [self unknw_doSave]
+// resolve at compile time (each hooked class supplies its own implementation).
+@interface NSObject (UNKNWSave)
+- (void)unknw_doSave;
+- (void)unknw_save:(UILongPressGestureRecognizer *)g;
+- (void)unknw_saveTap:(id)sender;
+@end
+
+static const void *kUNKNWDLInstalled  = &kUNKNWDLInstalled;
+static const void *kUNKNWBtnInstalled = &kUNKNWBtnInstalled;
 static NSURL *gUNKNWLastVideoURL = nil;  // most recently played AV video (fallback)
 static id gUNKNWCurrentReelMedia = nil;  // IGMedia of the most-recently-bound reel
+
+// Save-control mode: 0 = button + long-press, 1 = long-press only, 2 = off.
+static NSInteger UNKNWDLMode(void) { return (NSInteger)UNKNWPrefNumber(kUNKNWDownloadUIModeKey, 0); }
 
 #pragma mark - toast
 
@@ -234,6 +248,42 @@ static void UNKNWAddLongPress(UIView *v, SEL action) {
     [v addGestureRecognizer:lp];
 }
 
+// A floating circular save button, pinned to a bottom corner of the host view.
+static void UNKNWAddSaveButton(UIView *v, SEL action, BOOL leadingCorner) {
+    if (!v.window || objc_getAssociatedObject(v, kUNKNWBtnInstalled)) return;
+    objc_setAssociatedObject(v, kUNKNWBtnInstalled, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    v.userInteractionEnabled = YES;
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:22 weight:UIImageSymbolWeightSemibold];
+    [b setImage:[UIImage systemImageNamed:@"arrow.down.circle.fill" withConfiguration:cfg] forState:UIControlStateNormal];
+    b.tintColor = UIColor.whiteColor;
+    b.backgroundColor = [UIColor colorWithWhite:0 alpha:0.35];
+    b.layer.cornerRadius = 21; b.clipsToBounds = YES;
+    b.translatesAutoresizingMaskIntoConstraints = NO;
+    [b addTarget:v action:action forControlEvents:UIControlEventTouchUpInside];
+    [v addSubview:b];
+    UILayoutGuide *g = v.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [b.widthAnchor constraintEqualToConstant:42],
+        [b.heightAnchor constraintEqualToConstant:42],
+        [b.bottomAnchor constraintEqualToAnchor:g.bottomAnchor constant:-90],
+        (leadingCorner ? [b.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:16]
+                       : [b.trailingAnchor constraintEqualToAnchor:g.trailingAnchor constant:-16]),
+    ]];
+}
+
+// Install the chosen save controls on a media view (respecting the mode pref).
+// leadingCorner places the button away from the surface's own control rail.
+// allowLongPress is NO where a long-press would fight the app's own gesture
+// (e.g. the story viewer's hold-to-pause).
+static void UNKNWInstallSaveControls(UIView *v, SEL gestureAction, SEL buttonAction,
+                                     BOOL leadingCorner, BOOL allowLongPress) {
+    NSInteger mode = UNKNWDLMode();
+    if (mode == 2) return;                                    // off
+    if (allowLongPress) UNKNWAddLongPress(v, gestureAction);  // modes 0 and 1
+    if (mode == 0) UNKNWAddSaveButton(v, buttonAction, leadingCorner);
+}
+
 #pragma mark - hooks
 
 %group UNKNWMediaDownloader
@@ -284,23 +334,34 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 }
 %end
 
+// Reel — save the playing video (model first, AVPlayer capture last).
 %hook IGSundialViewerVideoCell
-- (void)didMoveToWindow { %orig; UNKNWAddLongPress(self, @selector(unknw_save:)); }
+- (void)didMoveToWindow {
+    %orig;
+    UNKNWInstallSaveControls(self, @selector(unknw_save:), @selector(unknw_saveTap:), YES, YES);
+}
 %new
-- (void)unknw_save:(UILongPressGestureRecognizer *)g {
-    if (g.state != UIGestureRecognizerStateBegan) return;
-    // Model first (IGMedia → progressive / videoVersions), AVPlayer capture last.
+- (void)unknw_doSave {
     NSURL *u = UNKNWReelVideoURL(self) ?: UNKNWVideoURLInView(self, 0);
     UNKNWSaveVideoURL(u);
 }
-%end
-
-%hook IGProfilePictureImageView
-- (void)didMoveToWindow { %orig; UNKNWAddLongPress(self, @selector(unknw_save:)); }
 %new
 - (void)unknw_save:(UILongPressGestureRecognizer *)g {
-    if (g.state != UIGestureRecognizerStateBegan) return;
-    // Prefer a full-resolution URL over the small rendered thumbnail.
+    if (g.state == UIGestureRecognizerStateBegan) [self unknw_doSave];
+}
+%new
+- (void)unknw_saveTap:(id)sender { [self unknw_doSave]; }
+%end
+
+// Profile picture — save the full-resolution image (long-press only: a floating
+// button would not fit the small avatar).
+%hook IGProfilePictureImageView
+- (void)didMoveToWindow {
+    %orig;
+    if (UNKNWDLMode() != 2) UNKNWAddLongPress(self, @selector(unknw_save:));
+}
+%new
+- (void)unknw_doSave {
     NSURL *hd = nil;
     for (NSString *key in @[@"overrideProfilePicURL", @"_overrideProfilePicURL", @"animatedImageURL", @"_animatedImageURL"]) {
         @try { id v = [self valueForKey:key]; if ([v isKindOfClass:NSURL.class]) { hd = v; break; } } @catch (__unused id e) {}
@@ -308,15 +369,49 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
     if (hd) { UNKNWSaveVideoURL(hd); return; }  // downloadURL handles images too
     UNKNWSaveImage(UNKNWLargestImage(self, 0));
 }
-%end
-
-// Feed post photo — long-press to save the displayed image.
-%hook IGFeedPhotoView
-- (void)didMoveToWindow { %orig; UNKNWAddLongPress(self, @selector(unknw_save:)); }
 %new
 - (void)unknw_save:(UILongPressGestureRecognizer *)g {
-    if (g.state == UIGestureRecognizerStateBegan) UNKNWSaveImage(UNKNWLargestImage(self, 0));
+    if (g.state == UIGestureRecognizerStateBegan) [self unknw_doSave];
 }
+%new
+- (void)unknw_saveTap:(id)sender { [self unknw_doSave]; }
+%end
+
+// Feed post photo — save the displayed image.
+%hook IGFeedPhotoView
+- (void)didMoveToWindow {
+    %orig;
+    UNKNWInstallSaveControls(self, @selector(unknw_save:), @selector(unknw_saveTap:), NO, YES);
+}
+%new
+- (void)unknw_doSave { UNKNWSaveImage(UNKNWLargestImage(self, 0)); }
+%new
+- (void)unknw_save:(UILongPressGestureRecognizer *)g {
+    if (g.state == UIGestureRecognizerStateBegan) [self unknw_doSave];
+}
+%new
+- (void)unknw_saveTap:(id)sender { [self unknw_doSave]; }
+%end
+
+// Story — button only (a long-press would fight the story's hold-to-pause).
+// Saves the current story's video if it has one, otherwise the shown image.
+%hook IGStoryViewerCell
+- (void)didMoveToWindow {
+    %orig;
+    UNKNWInstallSaveControls(self, @selector(unknw_save:), @selector(unknw_saveTap:), YES, NO);
+}
+%new
+- (void)unknw_doSave {
+    NSURL *u = UNKNWReelVideoURL(self);  // reuses currentMedia/currentReel → IGMedia
+    if (u) { UNKNWSaveVideoURL(u); return; }
+    UNKNWSaveImage(UNKNWLargestImage(self, 0));
+}
+%new
+- (void)unknw_save:(UILongPressGestureRecognizer *)g {
+    if (g.state == UIGestureRecognizerStateBegan) [self unknw_doSave];
+}
+%new
+- (void)unknw_saveTap:(id)sender { [self unknw_doSave]; }
 %end
 
 %end

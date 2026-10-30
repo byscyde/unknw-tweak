@@ -21,6 +21,13 @@
 @interface IGVideoFeedViewController : UIViewController @end
 @interface IGChainingFeedViewController : UIViewController @end
 
+// Reels (Sundial) ads are rendered by dedicated IGListKit section controllers.
+@interface IGSundialAdsBaseSectionController : NSObject @end
+@interface IGSundialAd4AdSectionController : NSObject @end
+@interface IGSundialAd4AdCreatorsSectionController : NSObject @end
+@interface IGSundialAdsCarouselSectionController : NSObject @end
+@interface IGSundialAdsShowreelNativeSectionController : NSObject @end
+
 static BOOL UNKNWBoolSel(id obj, NSString *name) {
     SEL s = NSSelectorFromString(name);
     if (![obj respondsToSelector:s]) return NO;
@@ -90,6 +97,25 @@ static NSArray *UNKNWFilterAds(NSArray *items) {
 
 %hook IGChainingFeedViewController
 - (NSArray *)objectsForListAdapter:(id)adapter { return UNKNWFilterAds(%orig); }
+%end
+
+// Reels pager: the sundial feed data source is Swift, so the array filter above
+// does not reach it. Instead collapse each reels-ad section controller to zero
+// items — the full-screen pager then skips straight to the next real clip.
+%hook IGSundialAdsBaseSectionController
+- (NSInteger)numberOfItems { return UNKNWPrefBool(kUNKNWHideAdsKey, YES) ? 0 : %orig; }
+%end
+%hook IGSundialAd4AdSectionController
+- (NSInteger)numberOfItems { return UNKNWPrefBool(kUNKNWHideAdsKey, YES) ? 0 : %orig; }
+%end
+%hook IGSundialAd4AdCreatorsSectionController
+- (NSInteger)numberOfItems { return UNKNWPrefBool(kUNKNWHideAdsKey, YES) ? 0 : %orig; }
+%end
+%hook IGSundialAdsCarouselSectionController
+- (NSInteger)numberOfItems { return UNKNWPrefBool(kUNKNWHideAdsKey, YES) ? 0 : %orig; }
+%end
+%hook IGSundialAdsShowreelNativeSectionController
+- (NSInteger)numberOfItems { return UNKNWPrefBool(kUNKNWHideAdsKey, YES) ? 0 : %orig; }
 %end
 
 %end

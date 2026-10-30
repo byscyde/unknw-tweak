@@ -131,6 +131,9 @@
                            dispatch_get_main_queue(), ^{ UNKNWPrefSetBool(kUNKNWFixesLoadingKey, NO); });
         }
 
+        // First launch on a new tweak version: show the "What's New" popup once.
+        UNKNWMaybeShowWhatsNew();
+
         UNKNWLog(@"loaded into %@ — %lu/%lu feature(s) active",
                  NSBundle.mainBundle.bundleIdentifier,
                  (unsigned long)loaded,

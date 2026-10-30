@@ -57,6 +57,9 @@ NSArray<NSString *> *UNKNWCategories(void);
 // An SF Symbol name for a category's menu icon.
 NSString *UNKNWCategoryIcon(NSString *category);
 
+// An SF Symbol name for an individual feature row (keyed by its pref key).
+NSString *UNKNWFeatureIcon(NSString *key);
+
 // Ordered section names within a category ("" for the leading unnamed block).
 NSArray<NSString *> *UNKNWSectionsInCategory(NSString *category);
 
