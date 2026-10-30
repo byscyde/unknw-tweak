@@ -32,6 +32,7 @@
 
 static const void *kUNKNWDLInstalled  = &kUNKNWDLInstalled;
 static const void *kUNKNWBtnInstalled = &kUNKNWBtnInstalled;
+static const void *kUNKNWProfileURL   = &kUNKNWProfileURL;  // last URL a profile-pic view loaded
 static NSURL *gUNKNWLastVideoURL = nil;  // most recently played AV video (fallback)
 static id gUNKNWCurrentReelMedia = nil;  // IGMedia of the most-recently-bound reel
 
@@ -302,6 +303,13 @@ static id UNKNWCurrentMediaForView(UIView *view) {
             UNKNWDiagLog([NSString stringWithFormat:@"[dl] media class: %@",
                           NSStringFromClass(object_getClass(media))]);
         });
+    } else {
+        static dispatch_once_t o2; dispatch_once(&o2, ^{
+            NSMutableArray *chain = [NSMutableArray array];
+            for (UIResponder *r = view; r && chain.count < 14; r = r.nextResponder)
+                [chain addObject:NSStringFromClass(object_getClass(r))];
+            UNKNWDiagLog([NSString stringWithFormat:@"[dl] no media; chain: %@", [chain componentsJoinedByString:@" > "]]);
+        });
     }
     return media;
 }
@@ -408,7 +416,10 @@ static void UNKNWMux(NSURL *videoFile, NSURL *audioFile, void (^done)(NSURL *out
     } @catch (__unused id e) { done(nil); return; }
     NSURL *out = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
                   URLByAppendingPathComponent:[NSString stringWithFormat:@"unknw-%@.mp4", NSUUID.UUID.UUIDString]];
-    AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetPassthrough];
+    // Re-encode (not passthrough): IG's DASH tracks are fragmented/HEVC, which
+    // Photos rejects on import (PHPhotosError 3302). HighestQuality produces a
+    // standard MP4 the Photos library accepts.
+    AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetHighestQuality];
     ex.outputURL = out; ex.outputFileType = AVFileTypeMPEG4; ex.shouldOptimizeForNetworkUse = YES;
     [ex exportAsynchronouslyWithCompletionHandler:^{
         UNKNWDiagLog([NSString stringWithFormat:@"[dl] mux status=%ld err=%@",
@@ -554,6 +565,12 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
     %orig;
     if (UNKNWDLMode() != 2) UNKNWAddLongPress(self, @selector(unknw_save:));
 }
+// Capture the URL this view loads — in the fullscreen profile-pic viewer that is
+// the HD image, the best IG serves.
+- (void)setImageURL:(id)url {
+    %orig;
+    @try { if (url) objc_setAssociatedObject(self, kUNKNWProfileURL, url, OBJC_ASSOCIATION_RETAIN_NONATOMIC); } @catch (__unused id e) {}
+}
 %new
 - (void)unknw_doSave {
     // Full-resolution profile picture: find the IGUser (on the view or up the
@@ -581,11 +598,12 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
     } else {
         UNKNWDiagLog(@"[dl] profile: no user in responder chain");
     }
+    if (!hd) hd = UNKNWCoerceURL(objc_getAssociatedObject(self, kUNKNWProfileURL));  // URL this view loaded (HD in fullscreen)
     if (!hd) for (NSString *k in @[@"imageURL", @"imageUrl", @"currentURL", @"url"]) {
         NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(self, NSSelectorFromString(k)));
         if (u) { hd = u; break; }
     }
-    if (hd) { UNKNWSaveVideoURL(hd); return; }  // downloadURL handles images too
+    if (hd) { UNKNWDiagLog([NSString stringWithFormat:@"[dl] profile saving %@", hd.absoluteString]); UNKNWSaveVideoURL(hd); return; }
     UNKNWSaveImage(UNKNWLargestImage(self, 0));
 }
 %new

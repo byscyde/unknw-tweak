@@ -145,19 +145,43 @@
 
 - (void)performPhotosExport:(NSURL *)fileURL albumName:(NSString *)albumName completion:(void (^)(BOOL, NSError *))completion {
     BOOL isVideo = [@[@"mp4", @"mov", @"m4v"] containsObject:fileURL.pathExtension.lowercaseString];
+    // Create the asset on its own (it lands in Recents — the "gallery"). Adding
+    // it to a named album in the SAME change block can fail the whole save, so
+    // the album is handled separately and best-effort.
+    __block NSString *localId = nil;
     [PHPhotoLibrary.sharedPhotoLibrary performChanges:^{
-        PHAssetChangeRequest *assetRequest = isVideo
+        PHAssetChangeRequest *req = isVideo
             ? [PHAssetChangeRequest creationRequestForAssetFromVideoAtFileURL:fileURL]
             : [PHAssetChangeRequest creationRequestForAssetFromImageAtFileURL:fileURL];
-        if (albumName.length) {
-            PHAssetCollection *album = [self albumNamed:albumName];
-            PHAssetCollectionChangeRequest *albumRequest = album
-                ? [PHAssetCollectionChangeRequest changeRequestForAssetCollection:album]
-                : [PHAssetCollectionChangeRequest creationRequestForAssetCollectionWithTitle:albumName];
-            [albumRequest addAssets:@[assetRequest.placeholderForCreatedAsset]];
-        }
+        localId = req.placeholderForCreatedAsset.localIdentifier;
     } completionHandler:^(BOOL success, NSError *error) {
-        [self finish:completion success:success error:error];
+        if (success && albumName.length && localId) {
+            [self addAsset:localId toAlbum:albumName completion:^{ [self finish:completion success:YES error:nil]; }];
+        } else {
+            [self finish:completion success:success error:error];
+        }
+    }];
+}
+
+- (void)addAsset:(NSString *)localId toAlbum:(NSString *)albumName completion:(void (^)(void))done {
+    void (^addToCollection)(PHAssetCollection *) = ^(PHAssetCollection *album) {
+        if (!album) { if (done) done(); return; }
+        [PHPhotoLibrary.sharedPhotoLibrary performChanges:^{
+            PHAsset *asset = [PHAsset fetchAssetsWithLocalIdentifiers:@[localId] options:nil].firstObject;
+            PHAssetCollectionChangeRequest *req = [PHAssetCollectionChangeRequest changeRequestForAssetCollection:album];
+            if (asset && req) [req addAssets:@[asset]];
+        } completionHandler:^(BOOL s, NSError *e) { if (done) done(); }];
+    };
+    PHAssetCollection *existing = [self albumNamed:albumName];
+    if (existing) { addToCollection(existing); return; }
+    __block NSString *albumLocalId = nil;
+    [PHPhotoLibrary.sharedPhotoLibrary performChanges:^{
+        PHAssetCollectionChangeRequest *req = [PHAssetCollectionChangeRequest creationRequestForAssetCollectionWithTitle:albumName];
+        albumLocalId = req.placeholderForCreatedAssetCollection.localIdentifier;
+    } completionHandler:^(BOOL s, NSError *e) {
+        PHAssetCollection *created = albumLocalId
+            ? [PHAssetCollection fetchAssetCollectionsWithLocalIdentifiers:@[albumLocalId] options:nil].firstObject : nil;
+        addToCollection(created);
     }];
 }
 
