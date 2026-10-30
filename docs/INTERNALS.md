@@ -169,3 +169,45 @@ See `UNKNWMsgSend`/`UNKNWIntCall` (MediaDownloader.x) and the signature-checked
 - `RGCurrentUserStory` — `mediaURL`, `mediaThumbnailURL`, `mediaType`, `mediaID`.
 - `RGAdsSection` — the ads settings section (Regram's ad removal itself is logos
   `%hook`s on IG classes, which do not appear as classes in the dump).
+
+---
+
+## Remaining features — verified hooks (implementation roadmap)
+
+Status of the registry features still to finish, with the exact IG 453 hook
+points found in the class dump (so implementation is precise, not guesswork).
+
+### Done (shipped)
+- Hide ads (feed/reels/story), Media download (reels/story/profile/DM), Hide
+  story seen, Hide typing, Hide DM read receipts, Confirm calls, Confirm like,
+  Confirm follow, Copy text.
+
+### Clean hook identified — ready to implement
+- **Disable feed video autoplay**: `IGFeedMediaPlaybackEligibility` /
+  `IGSundialGridVideoViewController -autoplayEnabled` (force NO).
+- **Manual send seen** (pairs with Hide read receipts): call
+  `IGDirectThreadViewFeatureManager -markLastMessageAsSeen` from a one-tap button.
+- **Download audio message**: model `IGDirectAudioMessage` (`-audio`, `-waveform`,
+  `-durationMs`); cell `IGDirectAudioMessageUI.IGDirectAudioMessageCell` (Swift,
+  runtime-swizzle to add a save gesture); resolve the audio asset URL off `-audio`.
+
+### Medium — needs a styled-string / view rebuild
+- **Detailed dates**: `IGFeedItemHeader -_determineFirstRowStyledStringWithShouldAddTimestamp:`
+  and `-lazyFullTimestampLabel` / `-lazyTimestampLabel` (swap the abbreviated
+  timestamp for a full date string).
+- **Hide comments preview**: `IGCommentGroupSectionController` /
+  `IGSundialCommentPreviewViewModel` preview-comment rows (drop/collapse them).
+
+### Large — sub-projects (need their own pass + testing)
+- **Keep unsent messages**: intercept the realtime unsend event
+  (`IGDirectMessageListMenuControllerAdapter` has the unsend dialogs; the actual
+  recall is processed in the realtime/cache layer) and retain the message.
+- **Send audio from file**: feed an audio file / extracted track (AVAssetExport)
+  into the voice-message send path.
+- **Reels auto-advance / limit**: the sundial pager loops internally; find the
+  "reel became current / finished" callback on `IGSundialFeedViewController`.
+- **Stories archive / auto-download**: capture your own posted story + its
+  viewers/likers (`IGReel`, story insights / viewers response).
+- **Profile analyzer**: fetch followers/following, diff for unfollowers /
+  non-followers-back, persist and present (`IGProfileViewController -user`,
+  the followers/following list response models).
