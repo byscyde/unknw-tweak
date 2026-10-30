@@ -31,15 +31,24 @@
 @interface IGSundialAdsCarouselSectionController : NSObject @end
 @interface IGSundialAdsShowreelNativeSectionController : NSObject @end
 
+// Signature-checked dynamic calls: only invoke a no-arg selector whose return
+// type matches what we read, so a Swift getter with a scalar/struct return can't
+// cause an uncatchable crash.
 static BOOL UNKNWBoolSel(id obj, NSString *name) {
     SEL s = NSSelectorFromString(name);
     if (![obj respondsToSelector:s]) return NO;
-    @try { return ((BOOL (*)(id, SEL))objc_msgSend)(obj, s); } @catch (__unused id e) { return NO; }
+    NSMethodSignature *sig = nil; @try { sig = [obj methodSignatureForSelector:s]; } @catch (__unused id e) { return NO; }
+    if (!sig || sig.numberOfArguments != 2) return NO;
+    char r = sig.methodReturnType[0];
+    if (r != 'B' && r != 'c') return NO;
+    @try { return ((BOOL (*)(id, SEL))objc_msgSend)(obj, s) ? YES : NO; } @catch (__unused id e) { return NO; }
 }
 
 static id UNKNWIdSel(id obj, NSString *name) {
     SEL s = NSSelectorFromString(name);
     if (![obj respondsToSelector:s]) return nil;
+    NSMethodSignature *sig = nil; @try { sig = [obj methodSignatureForSelector:s]; } @catch (__unused id e) { return nil; }
+    if (!sig || sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') return nil;
     @try { return ((id (*)(id, SEL))objc_msgSend)(obj, s); } @catch (__unused id e) { return nil; }
 }
 
@@ -55,6 +64,8 @@ static BOOL UNKNWIsAdObject(id obj) {
     if (UNKNWBoolSel(obj, @"isAd") || UNKNWBoolSel(obj, @"isSponsored")) return YES;
     id adid = UNKNWIdSel(obj, @"adID") ?: UNKNWIdSel(obj, @"adId");
     if ([adid isKindOfClass:NSString.class] && [(NSString *)adid length]) return YES;
+    // Story ad reels: the reel view model carries a non-nil adsDetails.
+    if (UNKNWIdSel(obj, @"adsDetails")) return YES;
     // Feed rows usually wrap an IGMedia; check the flags on it too.
     for (NSString *k in @[@"media", @"feedItem", @"item"]) {
         id m = UNKNWIdSel(obj, k);
