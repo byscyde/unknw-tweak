@@ -150,7 +150,7 @@ NSArray<UNKNWFeature *> *UNKNWAllFeatures(void) {
                        defaultOn:NO init:NULL],
             [UNKNWFeature segment:kUNKNWMediaDestKey category:cDownload section:@"Destination"
                             title:@"Save to" detail:@"Where downloaded media is stored"
-                          options:@[@"Vault", @"Photos"] defaultIndex:0],
+                          options:@[@"Vault", @"Photos"] defaultIndex:1],
             [UNKNWFeature segment:kUNKNWMediaAlbumKey category:cDownload section:@"Destination"
                             title:@"Photos album" detail:@"Album used when saving to Photos"
                           options:@[@"UNKNW", @"Instagram", @"Camera Roll"] defaultIndex:0],

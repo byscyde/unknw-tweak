@@ -15,7 +15,9 @@
 
 @interface IGSundialViewerVideoCell : UIView
 @end
-@interface IGSundialViewerVideoSectionController : NSObject
+@interface IGSundialViewerCarouselSectionController : NSObject
+@end
+@interface IGSundialViewerPhotoSectionController : NSObject
 @end
 @interface IGProfilePictureImageView : UIImageView
 @end
@@ -100,9 +102,11 @@ static void UNKNWSaveVideoURL(NSURL *url) {
     }];
 }
 
-// Find the largest rendered UIImage inside a view subtree.
+// Find the largest rendered UIImage inside a view subtree. Buttons (incl. our
+// own save button and IG's small glyph buttons) are skipped so we never grab an
+// icon instead of the media.
 static UIImage *UNKNWLargestImage(UIView *v, int depth) {
-    if (!v || depth > 6) return nil;
+    if (!v || depth > 6 || [v isKindOfClass:UIButton.class]) return nil;
     UIImage *best = nil; CGFloat bestArea = 0;
     if ([v isKindOfClass:UIImageView.class]) {
         UIImage *img = ((UIImageView *)v).image;
@@ -122,7 +126,9 @@ static void UNKNWSaveImage(UIImage *image) {
     NSURL *f = [UNKNWVault.shared saveData:data suggestedName:@"image.jpg" error:nil];
     if (!f) { UNKNWToast(@"Download failed"); return; }
     UNKNWToast(@"Saved ✓");
-    [UNKNWVault.shared exportToPhotos:f albumName:@"UNKNW" completion:nil];
+    // Default destination is Photos; export unless the user chose Vault-only.
+    if ((NSInteger)UNKNWPrefNumber(kUNKNWMediaDestKey, 1) == 1)
+        [UNKNWVault.shared exportToPhotos:f albumName:@"UNKNW" completion:nil];
 }
 
 #pragma mark - reel video URL from the IGMedia model (version-robust, ObjC-only)
@@ -136,19 +142,26 @@ static id UNKNWMsgSend(id obj, SEL sel) {
     return ((id (*)(id, SEL))objc_msgSend)(obj, sel);
 }
 
-// Resolve the IGMedia model from whatever object a bind/responder exposes.
+// Is this object an IGMedia-like model (responds to media content accessors)?
+static BOOL UNKNWIsMediaModel(id o) {
+    return o && ([o respondsToSelector:@selector(videoVersions)] ||
+                 [o respondsToSelector:@selector(progressiveDownloadUrl)] ||
+                 [o respondsToSelector:NSSelectorFromString(@"imageVersions2")] ||
+                 [o respondsToSelector:NSSelectorFromString(@"displayURL")]);
+}
+
+// Resolve the IGMedia model from whatever object a bind/responder exposes
+// (the object itself, or a reel/section-controller/view-model that wraps it).
 static id UNKNWMediaFromObject(id obj) {
     if (!obj) return nil;
-    if ([obj respondsToSelector:@selector(videoVersions)] ||
-        [obj respondsToSelector:@selector(progressiveDownloadUrl)]) return obj;
-    for (NSString *name in @[@"media", @"currentMedia", @"feedItem", @"item", @"object"]) {
+    if (UNKNWIsMediaModel(obj)) return obj;
+    for (NSString *name in @[@"media", @"currentMedia", @"reelMedia", @"currentItem",
+                             @"feedItem", @"item", @"object", @"post", @"activeMedia", @"focusedMedia"]) {
         SEL s = NSSelectorFromString(name);
         if (![obj respondsToSelector:s]) continue;
         @try {
             id m = UNKNWMsgSend(obj, s);
-            if (m && m != obj &&
-                ([m respondsToSelector:@selector(videoVersions)] ||
-                 [m respondsToSelector:@selector(progressiveDownloadUrl)])) return m;
+            if (m && m != obj && UNKNWIsMediaModel(m)) return m;
         } @catch (__unused id e) {}
     }
     return nil;
@@ -210,30 +223,76 @@ static NSURL *UNKNWVideoURLFromMedia(id media) {
     return nil;
 }
 
-// The media for the reel under the finger: prefer the live responder chain
-// (exact visible item), then the last-bound reel, then AV capture.
-static NSURL *UNKNWReelVideoURL(UIView *cell) {
+// Pull the best downloadable image URL out of an IGMedia model.
+static NSURL *UNKNWImageURLFromMedia(id media) {
+    if (!media) return nil;
+    @try {
+        for (NSString *k in @[@"displayURL", @"displayUrl", @"imageURL", @"imageUrl", @"url", @"URL"]) {
+            SEL s = NSSelectorFromString(k);
+            if ([media respondsToSelector:s]) {
+                NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(media, s));
+                if (u) return u;
+            }
+        }
+        // imageVersions2 / imageCandidates / candidates → widest candidate → url
+        for (NSString *k in @[@"imageVersions2", @"imageCandidates", @"candidates"]) {
+            SEL s = NSSelectorFromString(k);
+            if (![media respondsToSelector:s]) continue;
+            id node = UNKNWMsgSend(media, s);
+            // imageVersions2 wraps its candidates under -candidates; unwrap if needed.
+            if (node && ![node isKindOfClass:NSArray.class] &&
+                [node respondsToSelector:@selector(candidates)])
+                node = UNKNWMsgSend(node, @selector(candidates));
+            if (![node isKindOfClass:NSArray.class] || ![node count]) continue;
+            id best = nil; long bestW = -1;
+            for (id c in (NSArray *)node) {
+                long w = 0;
+                if ([c respondsToSelector:@selector(width)])
+                    w = ((long (*)(id, SEL))objc_msgSend)(c, @selector(width));
+                if (w >= bestW) { bestW = w; best = c; }
+            }
+            if (!best) best = ((NSArray *)node).firstObject;
+            for (NSString *uk in @[@"url", @"URL"]) {
+                SEL us = NSSelectorFromString(uk);
+                if ([best respondsToSelector:us]) {
+                    NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(best, us));
+                    if (u) return u;
+                }
+            }
+        }
+    } @catch (__unused id e) {}
+    return nil;
+}
+
+// Resolve the IGMedia of the item under the finger: ask the live responder
+// chain (the reels/story viewer exposes the current item), then the last-bound
+// reel. No KVC / Swift-view introspection, so there is no SIGSEGV path.
+static id UNKNWCurrentMediaForView(UIView *view) {
     id media = nil;
-    for (UIResponder *r = cell; r; r = r.nextResponder) {
-        @try {
-            if ([r respondsToSelector:@selector(currentMedia)]) {
-                id m = UNKNWMediaFromObject(UNKNWMsgSend(r, @selector(currentMedia)));
+    for (UIResponder *r = view; r && !media; r = r.nextResponder) {
+        for (NSString *name in @[@"currentMedia", @"activeMedia", @"focusedMedia",
+                                 @"currentPost", @"currentReel", @"currentItem"]) {
+            SEL s = NSSelectorFromString(name);
+            if (![r respondsToSelector:s]) continue;
+            @try {
+                id m = UNKNWMediaFromObject(UNKNWMsgSend(r, s));
                 if (m) { media = m; break; }
-            }
-            if ([r respondsToSelector:@selector(currentReel)]) {
-                id m = UNKNWMediaFromObject(UNKNWMsgSend(r, @selector(currentReel)));
-                if (m) { media = m; break; }
-            }
-        } @catch (__unused id e) {}
+            } @catch (__unused id e) {}
+        }
     }
     if (!media) media = gUNKNWCurrentReelMedia;
     if (media) {
         static dispatch_once_t o; dispatch_once(&o, ^{
-            UNKNWDiagLog([NSString stringWithFormat:@"[dl] reel media class: %@",
+            UNKNWDiagLog([NSString stringWithFormat:@"[dl] media class: %@",
                           NSStringFromClass(object_getClass(media))]);
         });
     }
-    NSURL *u = UNKNWVideoURLFromMedia(media);
+    return media;
+}
+
+// Video URL for the reel under the finger (model first, AV capture last).
+static NSURL *UNKNWReelVideoURL(UIView *cell) {
+    NSURL *u = UNKNWVideoURLFromMedia(UNKNWCurrentMediaForView(cell));
     return u ?: gUNKNWLastVideoURL;
 }
 
@@ -323,14 +382,17 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 %end
 
 // IGListKit binds the reel's model here; stash it as the current reel so a
-// long-press can resolve the exact video even if the responder lookup misses.
-%hook IGSundialViewerVideoSectionController
+// long-press can resolve the exact media even if the responder lookup misses.
+%hook IGSundialViewerCarouselSectionController
 - (void)didUpdateToObject:(id)object {
     %orig;
-    @try {
-        id m = UNKNWMediaFromObject(object);
-        if (m) gUNKNWCurrentReelMedia = m;
-    } @catch (__unused id e) {}
+    @try { id m = UNKNWMediaFromObject(object); if (m) gUNKNWCurrentReelMedia = m; } @catch (__unused id e) {}
+}
+%end
+%hook IGSundialViewerPhotoSectionController
+- (void)didUpdateToObject:(id)object {
+    %orig;
+    @try { id m = UNKNWMediaFromObject(object); if (m) gUNKNWCurrentReelMedia = m; } @catch (__unused id e) {}
 }
 %end
 
@@ -362,18 +424,32 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 }
 %new
 - (void)unknw_doSave {
-    // Download the actual image the view loaded (full file) rather than the
-    // small re-rendered bitmap. These are ObjC accessors — safe via objc_msgSend.
+    // Full-resolution profile picture: prefer the user model's HD URL, then the
+    // URL the image view loaded, then fall back to the rendered bitmap.
     NSURL *hd = nil;
-    for (NSString *name in @[@"currentURL", @"imageURL", @"imageUrl", @"url", @"profilePicURL", @"profilePicUrl"]) {
-        SEL s = NSSelectorFromString(name);
-        if (![self respondsToSelector:s]) continue;
-        @try {
-            id v = ((id (*)(id, SEL))objc_msgSend)(self, s);
-            if ([v isKindOfClass:NSURL.class]) { hd = v; break; }
-            if ([v isKindOfClass:NSString.class] && [(NSString *)v length]) { hd = [NSURL URLWithString:v]; break; }
-        } @catch (__unused id e) {}
-    }
+    @try {
+        if ([self respondsToSelector:@selector(user)]) {
+            id user = UNKNWMsgSend(self, @selector(user));
+            if (user) {
+                SEL hi = NSSelectorFromString(@"hdProfilePicUrlInfo");
+                if ([user respondsToSelector:hi]) {
+                    id info = UNKNWMsgSend(user, hi);
+                    for (NSString *uk in @[@"url", @"URL"]) {
+                        SEL us = NSSelectorFromString(uk);
+                        if (info && [info respondsToSelector:us]) { NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(info, us)); if (u) { hd = u; break; } }
+                    }
+                }
+                if (!hd) for (NSString *k in @[@"profilePicURL", @"profilePicUrl"]) {
+                    SEL s = NSSelectorFromString(k);
+                    if ([user respondsToSelector:s]) { NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(user, s)); if (u) { hd = u; break; } }
+                }
+            }
+        }
+        if (!hd) for (NSString *k in @[@"imageURL", @"imageUrl", @"currentURL", @"url"]) {
+            SEL s = NSSelectorFromString(k);
+            if ([self respondsToSelector:s]) { NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(self, s)); if (u) { hd = u; break; } }
+        }
+    } @catch (__unused id e) {}
     if (hd) { UNKNWSaveVideoURL(hd); return; }  // downloadURL handles images too
     UNKNWSaveImage(UNKNWLargestImage(self, 0));
 }
@@ -410,8 +486,11 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 }
 %new
 - (void)unknw_doSave {
-    NSURL *u = UNKNWReelVideoURL(self);  // reuses currentMedia/currentReel → IGMedia
-    if (u) { UNKNWSaveVideoURL(u); return; }
+    id media = UNKNWCurrentMediaForView(self);
+    NSURL *v = UNKNWVideoURLFromMedia(media) ?: gUNKNWLastVideoURL;
+    if (v) { UNKNWSaveVideoURL(v); return; }
+    NSURL *img = UNKNWImageURLFromMedia(media);
+    if (img) { UNKNWSaveVideoURL(img); return; }  // downloadURL handles images too
     UNKNWSaveImage(UNKNWLargestImage(self, 0));
 }
 %new

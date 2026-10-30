@@ -102,7 +102,7 @@
             [self finish:completion success:NO error:saveError];
             return;
         }
-        if (UNKNWPrefNumber(kUNKNWMediaDestKey, UNKNWVaultDestinationVault) == UNKNWVaultDestinationPhotos) {
+        if (UNKNWPrefNumber(kUNKNWMediaDestKey, UNKNWVaultDestinationPhotos) == UNKNWVaultDestinationPhotos) {
             [self exportToPhotos:stored albumName:[self preferredAlbumName] completion:completion];
         } else {
             [self finish:completion success:YES error:nil];

@@ -100,25 +100,13 @@ static NSArray *UNKNWFilterAdReels(NSArray *reels) {
 
 %group UNKNWHideAds
 
-%hook IGMainFeedListAdapterDataSource
-- (NSArray *)objectsForListAdapter:(id)adapter { return UNKNWFilterAds(%orig); }
-%end
+// NOTE: the feed/reels list data sources that vend -objectsForListAdapter: are a
+// mix of ObjC and Swift classes, and %hook cannot target the Swift (dotted)
+// names. We instead swizzle that selector on every implementing class at load
+// (UNKNWSwizzleObjectsForListAdapter below), which reaches all of them.
 
-%hook IGSundialFeedDataSource
-- (NSArray *)objectsForListAdapter:(id)adapter { return UNKNWFilterAds(%orig); }
-%end
-
-%hook IGVideoFeedViewController
-- (NSArray *)objectsForListAdapter:(id)adapter { return UNKNWFilterAds(%orig); }
-%end
-
-%hook IGChainingFeedViewController
-- (NSArray *)objectsForListAdapter:(id)adapter { return UNKNWFilterAds(%orig); }
-%end
-
-// Reels pager: the sundial feed data source is Swift, so the array filter above
-// does not reach it. Instead collapse each reels-ad section controller to zero
-// items — the full-screen pager then skips straight to the next real clip.
+// Reels pager backstop: collapse each reels-ad section controller to zero items
+// so the full-screen pager skips straight to the next real clip.
 %hook IGSundialAdsBaseSectionController
 - (NSInteger)numberOfItems { return UNKNWPrefBool(kUNKNWHideAdsKey, YES) ? 0 : %orig; }
 %end
@@ -150,6 +138,45 @@ static NSArray *UNKNWFilterAdReels(NSArray *reels) {
 // TODO: hide the comment-preview rows under feed posts.
 %end
 
-void UNKNWInitHideAds(void)             { %init(UNKNWHideAds); }
+// Swizzle -objectsForListAdapter: on every class that implements it directly,
+// so the ad filter runs for both ObjC and Swift list data sources (feed, reels,
+// and any other IGListKit surface). Done once at load.
+static void UNKNWSwizzleObjectsForListAdapter(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        SEL sel = @selector(objectsForListAdapter:);
+        unsigned int classCount = 0;
+        Class *classes = objc_copyClassList(&classCount);
+        if (!classes) return;
+        for (unsigned int i = 0; i < classCount; i++) {
+            Class cls = classes[i];
+            unsigned int methodCount = 0;
+            Method *methods = class_copyMethodList(cls, &methodCount);
+            if (!methods) continue;
+            Method target = NULL;
+            for (unsigned int j = 0; j < methodCount; j++) {
+                if (method_getName(methods[j]) == sel) { target = methods[j]; break; }
+            }
+            free(methods);
+            if (!target) continue;
+            // Only wrap methods that return an object pointer (the items array).
+            char *rt = method_copyReturnType(target);
+            char ret = rt ? rt[0] : '\0';
+            free(rt);
+            if (ret != '@') continue;
+            IMP orig = method_getImplementation(target);
+            IMP wrapper = imp_implementationWithBlock(^id(id self_, id adapter) {
+                id result = ((id (*)(id, SEL, id))orig)(self_, sel, adapter);
+                if ([result isKindOfClass:NSArray.class]) return UNKNWFilterAds(result);
+                return result;
+            });
+            method_setImplementation(target, wrapper);
+        }
+        free(classes);
+        UNKNWDiagLog(@"[ads] objectsForListAdapter: swizzle installed");
+    });
+}
+
+void UNKNWInitHideAds(void)             { %init(UNKNWHideAds); UNKNWSwizzleObjectsForListAdapter(); }
 void UNKNWInitFeedDisableAutoplay(void) { %init(UNKNWFeedDisableAutoplay); }
 void UNKNWInitHideCommentsPreview(void) { %init(UNKNWHideCommentsPreview); }
