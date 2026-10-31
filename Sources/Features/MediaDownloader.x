@@ -402,17 +402,42 @@ static NSString *UNKNWBestRepURL(NSString *mpd, BOOL wantVideo) {
 
 static void UNKNWSaveLocalVideo(NSURL *fileURL) {
     if (!fileURL) { UNKNWToast(@"Download failed"); return; }
-    unsigned long long sz = [[NSFileManager.defaultManager attributesOfItemAtPath:fileURL.path error:nil] fileSize];
-    if ((NSInteger)UNKNWPrefNumber(kUNKNWMediaDestKey, 1) == 1) {
-        [UNKNWVault.shared exportToPhotos:fileURL albumName:@"UNKNW" completion:^(BOOL ok, NSError *e){
-            UNKNWDiagLog([NSString stringWithFormat:@"[dl] photos export ok=%d %lluKB err=%@", ok, sz/1024, e.localizedDescription ?: @"-"]);
-            UNKNWToast(ok ? @"Saved to Photos ✓" : @"Save failed");
-        }];
-    } else {
+    NSString *path = fileURL.path;
+    unsigned long long sz = [[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil] fileSize];
+    if ((NSInteger)UNKNWPrefNumber(kUNKNWMediaDestKey, 1) != 1) {   // Vault
         NSData *d = [NSData dataWithContentsOfURL:fileURL];
-        NSURL *v = d ? [UNKNWVault.shared saveData:d suggestedName:@"reel.mp4" error:nil] : nil;
+        NSURL *v = d ? [UNKNWVault.shared saveData:d suggestedName:@"reel.mov" error:nil] : nil;
         UNKNWToast(v ? @"Saved to Vault ✓" : @"Save failed");
+        return;
     }
+    // Photos: prefer the classic camera-roll API when the file is compatible
+    // (it is the most lenient path); otherwise fall back to PHPhotoLibrary.
+    BOOL compat = UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(path);
+    UNKNWDiagLog([NSString stringWithFormat:@"[dl] save video compat=%d %lluKB", compat, sz/1024]);
+    if (compat) {
+        UISaveVideoAtPathToSavedPhotosAlbum(path, nil, NULL, NULL);
+        UNKNWToast(@"Saved to Photos ✓");
+        return;
+    }
+    // Incompatible container/codec for the camera roll — re-encode the (now valid,
+    // single-file) movie to H.264 and try again. This differs from the earlier
+    // "Cannot Decode": that failed decoding a composition of two fragmented-MP4
+    // files; a finalized .mov decodes normally.
+    AVURLAsset *a = [AVURLAsset assetWithURL:fileURL];
+    NSURL *out = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
+                  URLByAppendingPathComponent:[NSString stringWithFormat:@"unknw-%@-h264.mov", NSUUID.UUID.UUIDString]];
+    AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:a presetName:AVAssetExportPresetHighestQuality];
+    ex.outputURL = out; ex.outputFileType = AVFileTypeQuickTimeMovie;
+    [ex exportAsynchronouslyWithCompletionHandler:^{
+        BOOL ok2 = (ex.status == AVAssetExportSessionStatusCompleted) && UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(out.path);
+        UNKNWDiagLog([NSString stringWithFormat:@"[dl] reencode status=%ld compat2=%d err=%@", (long)ex.status, ok2, ex.error.localizedDescription ?: @"-"]);
+        if (ok2) {
+            UISaveVideoAtPathToSavedPhotosAlbum(out.path, nil, NULL, NULL);
+            UNKNWToast(@"Saved to Photos ✓");
+        } else {
+            UNKNWToast(@"Video format not supported");
+        }
+    }];
 }
 
 // Download one URL to a temp file.
@@ -492,9 +517,10 @@ static void UNKNWMux(NSURL *videoFile, NSURL *audioFile, void (^done)(NSURL *out
             [aReader addOutput:aOut];
         }
 
+        // .mov (QuickTime) is the most reliably Photos-importable video container.
         NSURL *out = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
-                      URLByAppendingPathComponent:[NSString stringWithFormat:@"unknw-%@.mp4", NSUUID.UUID.UUIDString]];
-        AVAssetWriter *writer = [[AVAssetWriter alloc] initWithURL:out fileType:AVFileTypeMPEG4 error:&err];
+                      URLByAppendingPathComponent:[NSString stringWithFormat:@"unknw-%@.mov", NSUUID.UUID.UUIDString]];
+        AVAssetWriter *writer = [[AVAssetWriter alloc] initWithURL:out fileType:AVFileTypeQuickTimeMovie error:&err];
         AVAssetWriterInput *vIn = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeVideo outputSettings:nil
                                    sourceFormatHint:(__bridge CMFormatDescriptionRef)vt.formatDescriptions.firstObject];
         vIn.expectsMediaDataInRealTime = NO;
