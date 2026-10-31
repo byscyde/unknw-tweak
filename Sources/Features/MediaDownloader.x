@@ -236,6 +236,45 @@ static NSURL *UNKNWVideoURLFromMedia(id media) {
     return nil;  // likely DASH-only — the caller falls back to UNKNWDashManifest
 }
 
+// Find the largest profile-picture URL on a user model (bounded, signature-safe
+// graph probe). IG serves profile pics at several sizes encoded in the path as
+// "sWxH"; we return the biggest (the HD / original-upload the browser loads),
+// never a rendered circular avatar.
+static NSURL *UNKNWBestProfileURL(id root) {
+    if (!root) return nil;
+    NSArray *acc = @[@"hdProfilePicUrlInfo", @"hdProfilePicURLInfo", @"profilePicUrlInfo",
+                     @"hdProfilePicURL", @"profilePicURL", @"profilePicUrl", @"url", @"URL",
+                     @"uri", @"info", @"imageURL", @"user"];
+    NSMutableArray *queue = [NSMutableArray arrayWithObject:root];
+    NSMutableSet *seen = [NSMutableSet set];
+    NSMutableArray<NSURL *> *found = [NSMutableArray array];
+    NSInteger budget = 150;
+    while (queue.count && budget-- > 0) {
+        id o = queue.firstObject; [queue removeObjectAtIndex:0];
+        NSValue *k = [NSValue valueWithNonretainedObject:o];
+        if ([seen containsObject:k]) continue; [seen addObject:k];
+        NSURL *d = UNKNWCoerceURL(o);
+        if ([d.scheme hasPrefix:@"http"]) [found addObject:d];
+        for (NSString *name in acc) {
+            id c = UNKNWMsgSend(o, NSSelectorFromString(name));
+            if (!c || c == o) continue;
+            NSURL *u = UNKNWCoerceURL(c);
+            if ([u.scheme hasPrefix:@"http"]) [found addObject:u];
+            else if (queue.count < 100) [queue addObject:c];
+        }
+    }
+    NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"/s(\\d+)x\\d+" options:0 error:nil];
+    NSURL *best = nil; long bestSize = -1;
+    for (NSURL *u in found) {
+        NSString *s = u.absoluteString;
+        long sz = 1;  // default so an un-sized URL still beats nothing
+        NSTextCheckingResult *m = [re firstMatchInString:s options:0 range:NSMakeRange(0, s.length)];
+        if (m) sz = [[s substringWithRange:[m rangeAtIndex:1]] longLongValue];
+        if (sz > bestSize) { bestSize = sz; best = u; }
+    }
+    return best ?: found.firstObject;
+}
+
 // The DASH manifest (MPD XML) string for a media, if it streams via DASH.
 static NSString *UNKNWDashManifest(id media) {
     for (NSString *k in @[@"videoDashManifest", @"dashManifest"]) {
@@ -401,21 +440,28 @@ static void UNKNWFetchToTemp(NSString *urlStr, NSString *ext, NSString *tag, voi
 
 // Pump one reader-output's encoded samples into one writer-input (passthrough —
 // no decode, so IG's fragmented/HEVC tracks remux fine), then leave the group.
-static void UNKNWPump(AVAssetReaderTrackOutput *readerOut, AVAssetWriterInput *writerIn,
-                      dispatch_queue_t q, dispatch_group_t group) {
+// CRITICAL: the block captures `reader` so the AVAssetReader stays alive for the
+// whole async pump — otherwise it deallocates when UNKNWMux returns and
+// -copyNextSampleBuffer throws "cannot copy before startReading". The whole body
+// is @try-guarded so any AVFoundation exception fails gracefully, never crashes.
+static void UNKNWPump(AVAssetReader *reader, AVAssetReaderTrackOutput *readerOut,
+                      AVAssetWriterInput *writerIn, dispatch_queue_t q, dispatch_group_t group) {
     dispatch_group_enter(group);
     [writerIn requestMediaDataWhenReadyOnQueue:q usingBlock:^{
-        while (writerIn.isReadyForMoreMediaData) {
-            CMSampleBufferRef buf = [readerOut copyNextSampleBuffer];
-            if (buf) {
+        @try {
+            while (writerIn.isReadyForMoreMediaData) {
+                if (reader.status != AVAssetReaderStatusReading) {
+                    [writerIn markAsFinished]; dispatch_group_leave(group); return;
+                }
+                CMSampleBufferRef buf = [readerOut copyNextSampleBuffer];
+                if (!buf) { [writerIn markAsFinished]; dispatch_group_leave(group); return; }
                 BOOL ok = [writerIn appendSampleBuffer:buf];
                 CFRelease(buf);
                 if (!ok) { [writerIn markAsFinished]; dispatch_group_leave(group); return; }
-            } else {
-                [writerIn markAsFinished];
-                dispatch_group_leave(group);
-                return;
             }
+        } @catch (__unused id e) {
+            @try { [writerIn markAsFinished]; } @catch (__unused id e2) {}
+            dispatch_group_leave(group);
         }
     }];
 }
@@ -470,8 +516,8 @@ static void UNKNWMux(NSURL *videoFile, NSURL *audioFile, void (^done)(NSURL *out
         [writer startSessionAtSourceTime:kCMTimeZero];
 
         dispatch_group_t group = dispatch_group_create();
-        UNKNWPump(vOut, vIn, dispatch_queue_create("unknw.remux.v", DISPATCH_QUEUE_SERIAL), group);
-        if (aIn) UNKNWPump(aOut, aIn, dispatch_queue_create("unknw.remux.a", DISPATCH_QUEUE_SERIAL), group);
+        UNKNWPump(vReader, vOut, vIn, dispatch_queue_create("unknw.remux.v", DISPATCH_QUEUE_SERIAL), group);
+        if (aIn) UNKNWPump(aReader, aOut, aIn, dispatch_queue_create("unknw.remux.a", DISPATCH_QUEUE_SERIAL), group);
         dispatch_group_notify(group, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
             [writer finishWritingWithCompletionHandler:^{
                 UNKNWDiagLog([NSString stringWithFormat:@"[dl] remux status=%ld err=%@",
@@ -639,36 +685,17 @@ static void UNKNWNoteVideoURL(NSURL *u, NSString *src) {
 }
 %new
 - (void)unknw_doSave {
-    // Full-resolution profile picture. Walk the responder chain (reaches the
-    // fullscreen profile viewer) and take the HD URL directly, or via the IGUser.
+    // Full-resolution profile picture = the largest URL IG serves (what a browser
+    // loads), never the rendered circular avatar. Probe the user model(s) on the
+    // responder chain and the viewed profile for the biggest profile-pic URL.
     NSURL *hd = nil;
-    SEL hiSel = NSSelectorFromString(@"hdProfilePicUrlInfo");
     for (UIResponder *r = self; r && !hd; r = r.nextResponder) {
-        // profile-specific URL accessors on the responder itself
-        for (NSString *k in @[@"hdProfilePicURL", @"profilePicURL", @"profilePicUrl"]) {
-            NSURL *u = UNKNWCoerceURL(UNKNWMsgSend(r, NSSelectorFromString(k)));
-            if (u) { hd = u; break; }
-        }
-        if (hd) break;
-        id info = UNKNWMsgSend(r, hiSel);
-        hd = UNKNWCoerceURL(UNKNWMsgSend(info, @selector(url))) ?: UNKNWCoerceURL(UNKNWMsgSend(info, @selector(URL)));
-        if (hd) break;
-        // via the user model
         for (NSString *uk in @[@"user", @"displayedUser", @"profileUser", @"currentUser"]) {
             id u = UNKNWMsgSend(r, NSSelectorFromString(uk));
-            if (!u) continue;
-            hd = UNKNWCoerceURL(UNKNWMsgSend(u, NSSelectorFromString(@"hdProfilePicURL")));
-            if (!hd) { id i2 = UNKNWMsgSend(u, hiSel); hd = UNKNWCoerceURL(UNKNWMsgSend(i2, @selector(url))) ?: UNKNWCoerceURL(UNKNWMsgSend(i2, @selector(URL))); }
-            if (!hd) hd = UNKNWCoerceURL(UNKNWMsgSend(u, NSSelectorFromString(@"profilePicURL")));
-            if (hd) break;
+            if (u) { hd = UNKNWBestProfileURL(u); if (hd) break; }
         }
     }
-    if (!hd && gUNKNWProfileUser) {  // fullscreen viewer: use the viewed profile's user
-        id u = gUNKNWProfileUser;
-        hd = UNKNWCoerceURL(UNKNWMsgSend(u, NSSelectorFromString(@"hdProfilePicURL")));
-        if (!hd) { id i2 = UNKNWMsgSend(u, hiSel); hd = UNKNWCoerceURL(UNKNWMsgSend(i2, @selector(url))) ?: UNKNWCoerceURL(UNKNWMsgSend(i2, @selector(URL))); }
-        if (!hd) hd = UNKNWCoerceURL(UNKNWMsgSend(u, NSSelectorFromString(@"profilePicURL")));
-    }
+    if (!hd && gUNKNWProfileUser) hd = UNKNWBestProfileURL(gUNKNWProfileUser);
     if (!hd) hd = UNKNWCoerceURL(objc_getAssociatedObject(self, kUNKNWProfileURL));  // URL this view loaded
     UNKNWDiagLog([NSString stringWithFormat:@"[dl] profile hd=%@", hd ? hd.absoluteString : @"NONE"]);
     if (hd) { UNKNWSaveVideoURL(hd); return; }  // downloadURL handles images too
